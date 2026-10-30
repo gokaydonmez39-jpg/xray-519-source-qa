@@ -21,7 +21,7 @@ python research_519.py --max-markets 519 --output receipt-519.json
 
 The CLI makes **anonymous GET** calls ONLY to `/api/v3/time`, `/api/v3/exchangeInfo`, `/api/v3/ticker/24hr`, `/api/v3/ticker/bookTicker` and `/api/v3/klines`. It fails closed on HTTP 418/429 and all network failures. It limits first-pass calls to 1,700, pace to at least 0.15 sec, and elapsed request-start runtime to 720 seconds. It loads 100 complete 1H + 40 complete 4H + 40 complete UTC 1D rows per symbol, each with `endTime` equal to the expected closed candle; it excludes still-forming data. New/short-history symbols are WARMUP; source/series anomalies are FAIL. If the scan begins in one UTC hour and ends in another, the receipt cannot PASS. It verifies live exchangeInfo scope again after scanning.
 
-For 519 symbols at exactly 3 kline calls per symbol, request count is **1,563** including two `/time`, two `/exchangeInfo` and two bulk ticker/book calls; no WSS or persistent cache is assumed. Approximate *minimum* pacing is 234 seconds, plus network and processing. The actual throughput is **UNVERIFIED** without real deployment. Shared IP request weight can be consumed by other clients and rate limit headers need independent production-grade monitoring. GitHub schedule is not real-time, may be delayed/dropped, and a GitHub-hosted Actions job is not a continuously running host.
+For 519 symbols at exactly 3 kline calls per symbol, request count is **1,563** including two `/time`, two `/exchangeInfo` and two bulk ticker/book calls; no WSS or persistent cache is assumed. Approximate *minimum* pacing is 234 seconds, plus network and processing. Real GitHub runs verified all 519 pairs across three frames each: 1,563 HTTP requests in 236.045 and 239.125 seconds at consecutive UTC hours. Full technical quality remains HOLD: 489 PASS, 30 WARMUP, zero FAIL in each run. Shared IP request weight can be consumed by other clients and rate limit headers need independent production-grade monitoring. GitHub schedule is not real-time, may be delayed/dropped, and a GitHub-hosted Actions job is not a continuously running host.
 
 Research scope maximums 250, 400 or 519 select by rolling quote-volume **ranking**, not alphabetic order. Top 250 may include stablecoins, stock tokens or other instrument types; **not** 250 AL-eligible cryptocurrencies. No threshold is loosened: original AL rules remain in private independent CORE-18. The present program deliberately does NOT evaluate those rules.
 
@@ -48,6 +48,21 @@ The source host is Binance's official anonymous `https://data-api.binance.vision
 
 ## Sequential HTTPS transport
 
-Direct standard runners reuse one TLS-verified connection without concurrent requests or automatic retries. Configured HTTPS/all proxy routes retain the original urllib transport. Request pacing, 720-second/1,700-request budgets, source schema, indicators and all quality/strategy boundaries are unchanged. Transport reuse, TLS verification, proxy routing, HTTP 301/418/429/503 rejection, wire failure and a real local persistent socket are covered by tests. 55 tests pass in both regular and optimized Python. First live source pilot: 250 scanned, 248 PASS, 2 WARMUP, zero FAIL, 756 requests, 369.458 seconds, run 41101495291; this is not full 519 quality acceptance.
+Direct standard runners reuse one TLS-verified connection without concurrent requests or automatic retries. Configured HTTPS/all proxy routes retain the original urllib transport. Request pacing, 720-second/1,700-request budgets, source schema, indicators and all quality/strategy boundaries are unchanged. Transport reuse, TLS verification, proxy routing, HTTP 301/418/429/503 rejection, wire failure and a real local persistent socket are covered by tests. The deployed f21af294 source passed 55 tests in regular and optimized Python on GitHub. The later coverage-audit revision adds eight tests; local and future-run results must be reported separately. First live source pilot: 250 scanned, 248 PASS, 2 WARMUP, zero FAIL, 756 requests, 369.458 seconds, run 41101495291; this is not full 519 quality acceptance.
 
 The workflow fetches its remote branch before a scan, rejects stale trigger commits, and rejects an existing scope/UTC-hour receipt before making scan requests. Three tests execute this exact workflow block against isolated real git repositories. Local UTC is used only for early duplicate suppression; the existing Binance-server epoch and immutable publisher remain the acceptance and overwrite guards. A delayed duplicate produces FAIL_CLOSED with no new evidence.
+
+
+## Verified live source evidence — 2026-10-30
+
+The 18:00 and 19:00 UTC receipts came from different successful GitHub runs:
+[41107448472](https://github.com/gokaydonmez39-jpg/xray-519-source-qa/actions/runs/41107448472) and
+[41113491734](https://github.com/gokaydonmez39-jpg/xray-519-source-qa/actions/runs/41113491734).
+Independent remote git readback, gzip/source SHA256, log counters, unique symbols and closed-frame timestamps matched. Their hourly epochs differ by exactly 3,600,000 ms and scope is identical.
+
+**519 source coverage: verified. Full 519 technical quality: HOLD (489 PASS / 30 WARMUP / 0 FAIL).**
+A WARMUP row has no technical snapshot or buy candidate. Missing real daily history is never synthesized or borrowed from Futures or another venue.
+
+The scheduled workflow is enabled and requests minute 23 UTC each hour. Native schedule execution is still unverified; YAML presence and a manual run are not schedule evidence. GitHub documents that scheduled events may be delayed or dropped. Duplicate epoch and stale-head preflight guards remain active.
+
+`PUBLIC_PACKAGE_SHA256_MANIFEST.json` describes the current source/test/document/workflow release, excluding itself and append-only receipts. Historic source manifests remain in Git history. Live receipt checksums are independent of the source manifest.

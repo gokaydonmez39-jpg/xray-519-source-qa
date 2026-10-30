@@ -1,7 +1,7 @@
 {
   "schema": "XRAY_519_SOURCE_ONLY_GITHUB_READY_MANIFEST_V1",
   "date": "2026-10-30",
-  "status": "TRANSPORT_AND_PREFLIGHT_TESTED_55_PENDING_519_ACCEPTANCE",
+  "status": "TWO_HOURLY_SOURCE_COVERAGE_VERIFIED_FULL_QUALITY_HOLD",
   "files": {
     ".github/workflows/hourly-519-public-source.yml": {
       "bytes": 3217,
@@ -12,8 +12,8 @@
       "sha256": "abecc8f7cb879bd83972d6ce32e3968676198db074d7221963b6f3d4930fc1e3"
     },
     "README.md": {
-      "bytes": 7279,
-      "sha256": "91a5a3eb3a7b767f78dae3070bd3b6eb7c2be9da95c6a342ab4fded553f127ac"
+      "bytes": 8915,
+      "sha256": "8ca47cb5a569fee2f29718fbfa8a8f45f2a5e6ca65041a955b2e8bf6385ed3a6"
     },
     "publish_receipt.py": {
       "bytes": 7557,
@@ -26,6 +26,10 @@
     "select_scope.py": {
       "bytes": 1947,
       "sha256": "72d50ac75b91f02a6fe2d953d1bae2dc3842b2f254d0ea3a0585f4e36e6d9e3f"
+    },
+    "tests/test_coverage_acceptance.py": {
+      "bytes": 2482,
+      "sha256": "2401412f6e4d998fec70f4dc6686a7964d3bd41893fcce8e53ad7c40db70a4b4"
     },
     "tests/test_final_start.py": {
       "bytes": 3346,
@@ -60,12 +64,12 @@
       "sha256": "1994e79adee650229621d4fc5d70cc0475577685a48b3fdcc134857cbb9761db"
     },
     "verify_epoch_pair.py": {
-      "bytes": 3936,
-      "sha256": "da43e8f58068152ea16064a68f3fb518ed5dc0edc9b3159b8a6bb9385789c244"
+      "bytes": 6907,
+      "sha256": "61dd727da770cfea1a7f22631bd0eb44d27af0b138559bb95a78e4ab58385a1b"
     },
     "verify_remote_pair.py": {
-      "bytes": 1945,
-      "sha256": "d0739b671024de1a36cd478b4e42e11a6bd847fedf02e727137d1fb418b789f0"
+      "bytes": 2410,
+      "sha256": "0fe9c5c33edff31a8a5d26f2da036f5ff10db85b462e2e8677c5f8bc1821a33b"
     }
   }
 }
