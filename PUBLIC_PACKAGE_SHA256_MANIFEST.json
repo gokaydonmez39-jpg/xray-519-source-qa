@@ -4,24 +4,24 @@
   "status": "TWO_HOURLY_SOURCE_COVERAGE_VERIFIED_FULL_QUALITY_HOLD",
   "files": {
     ".github/workflows/hourly-519-public-source.yml": {
-      "bytes": 3217,
-      "sha256": "12bedc234934b08c37748e8b1e84a9954b568059b1ee514a5ee8011ad6eb91cf"
+      "bytes": 4419,
+      "sha256": "e6a3b8435a1400ec9cf51a260de607f84fecab9d075d14cc8e1288a1b7b7b262"
     },
     "FINAL_START_AKTIVASYON_TR.md": {
-      "bytes": 3088,
-      "sha256": "4a9b6bd4978a19b67c1b1d23a5ac757b8990ab2aaeb14572e5d4363c4f308254"
+      "bytes": 4072,
+      "sha256": "afae5bc96d627c965c33357e43f7f9d86aec7097374cff41c444978bda78f9a8"
     },
     "README.md": {
-      "bytes": 8915,
-      "sha256": "8ca47cb5a569fee2f29718fbfa8a8f45f2a5e6ca65041a955b2e8bf6385ed3a6"
+      "bytes": 10838,
+      "sha256": "9fc89e441e88b88d074d6c073b79a6b738b5a0be4dfed8d3259c7d955475d6ba"
     },
     "publish_receipt.py": {
       "bytes": 7557,
       "sha256": "24023583fd7d729d5a883db2559d7965cc5a3284fedeb229f64f8ce5c3ef2b86"
     },
     "research_519.py": {
-      "bytes": 21375,
-      "sha256": "7d932e877e8b02acbfc396ef852c6614627883d3e0a7cdae47907f7e2fcff4e7"
+      "bytes": 23035,
+      "sha256": "88322e0c3fbd0136e9c01208af7ccccfdc761ae42b712492a3b5db6f44ba1c98"
     },
     "select_scope.py": {
       "bytes": 1947,
@@ -70,6 +70,22 @@
     "verify_remote_pair.py": {
       "bytes": 2410,
       "sha256": "0fe9c5c33edff31a8a5d26f2da036f5ff10db85b462e2e8677c5f8bc1821a33b"
+    },
+    ".github/workflows/bridge-source-ci.yml": {
+      "bytes": 1408,
+      "sha256": "0100d56243f8c7180a1c39748f8bc4a04a9d99bc957b6975b5cb15f5f8d10556"
+    },
+    "bridge_519.py": {
+      "bytes": 8408,
+      "sha256": "25c96344d75548400a485a2de59e4a32d226e0e301577237388c9830fcf1d3ab"
+    },
+    "publish_bridge.py": {
+      "bytes": 3254,
+      "sha256": "b7d8b0247d9f036a5c68595245272793378a48ef46c58bd15b3586d62e189772"
+    },
+    "tests/test_bridge_integration.py": {
+      "bytes": 3714,
+      "sha256": "2429972875fd4137cb30735a4b02342a8457b79c9c4a5c320d9fa8bc84b9e1ee"
     }
   }
 }
