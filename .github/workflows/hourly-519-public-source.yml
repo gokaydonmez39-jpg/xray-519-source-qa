@@ -3,6 +3,14 @@ name: XRAY 519 public Spot closed-bar research
 on:
   schedule:
     - cron: '17 * * * *'
+  # Run one new-source epoch after a reviewed code release; receipt pushes never retrigger.
+  push:
+    branches: [main]
+    paths:
+      - 'research_519.py'
+      - 'bridge_519.py'
+      - 'publish_bridge.py'
+      - '.github/workflows/hourly-519-public-source.yml'
   workflow_dispatch:
     inputs:
       max_markets:
@@ -47,7 +55,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          if [ "$EVENT_NAME" = schedule ]; then
+          if [ "$EVENT_NAME" = schedule ] || [ "$EVENT_NAME" = push ]; then
             MODE="$(python3 select_scope.py)"
           else
             case "$MODE_INPUT" in 250|400|519) MODE="$MODE_INPUT" ;; *) exit 2 ;; esac
@@ -66,7 +74,12 @@ jobs:
           printf 'SOURCE_PREFLIGHT_ALLOW_SCAN\n'
           # END_SOURCE_PREFLIGHT
           OUT="$RUNNER_TEMP/source-receipt.json"
-          python3 research_519.py --max-markets "$MODE" --output "$OUT" --pace 0.15
+          BRIDGE="$RUNNER_TEMP/private-eligible-source.json.gz"
+          if [ "$MODE" = 519 ]; then
+            python3 research_519.py --max-markets "$MODE" --output "$OUT" --bridge-output "$BRIDGE" --pace 0.15
+          else
+            python3 research_519.py --max-markets "$MODE" --output "$OUT" --pace 0.15
+          fi
           mapfile -t DETAILS < <(python3 publish_receipt.py --input "$OUT" --mode "$MODE")
           if [ "${#DETAILS[@]}" -ne 2 ]; then exit 2; fi
           FILE="${DETAILS[0]}"
@@ -74,11 +87,25 @@ jobs:
           test -f "$FILE"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- "$FILE"
+          if [ "$MODE" = 519 ]; then
+            mapfile -t BDETAILS < <(python3 publish_bridge.py --bridge "$BRIDGE" --receipt "$OUT")
+            if [ "${#BDETAILS[@]}" -ne 2 ]; then exit 2; fi
+            BFILE="${BDETAILS[0]}"
+            BEXPECTED="${BDETAILS[1]}"
+            test -f "$BFILE"
+            git add -- "$FILE" "$BFILE"
+          else
+            git add -- "$FILE"
+          fi
           git commit -m "research: append immutable $MODE closed-bar receipt [skip ci]"
           git push origin "HEAD:${GITHUB_REF_NAME}"
           git fetch origin "${GITHUB_REF_NAME}"
           ACTUAL="$(git show "origin/${GITHUB_REF_NAME}:${FILE}" | sha256sum | cut -d' ' -f1)"
           test "$ACTUAL" = "$EXPECTED"
+          if [ "$MODE" = 519 ]; then
+            BACTUAL="$(git show "origin/${GITHUB_REF_NAME}:$BFILE" | sha256sum | cut -d' ' -f1)"
+            test "$BACTUAL" = "$BEXPECTED"
+            printf 'BRIDGE_REMOTE_READBACK_PASS path=%s sha256=%s mode=%s\n' "$BFILE" "$BACTUAL" "$MODE"
+          fi
           printf 'RECEIPT_REMOTE_READBACK_PASS path=%s sha256=%s mode=%s\n' "$FILE" "$ACTUAL" "$MODE"
           python3 verify_remote_pair.py
