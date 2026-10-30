@@ -10,6 +10,7 @@ import argparse
 from collections import Counter
 from decimal import Decimal, InvalidOperation
 import hashlib
+import http.client
 import json
 import math
 import os
@@ -207,7 +208,13 @@ class HttpProvider:
         self.started = clock()
         self.previous = None
         self.requests = 0
-        self.opener = urllib.request.build_opener(_NoRedirect())
+        proxies = urllib.request.getproxies()
+        # Preserve the configured proxy route exactly. Direct standard runners
+        # can reuse one verified TLS connection instead of reconnecting per GET.
+        host = urllib.parse.urlsplit(BASE_URL).hostname
+        proxy_required = bool(proxies.get('https') or proxies.get('all')) and not urllib.request.proxy_bypass(host)
+        self.opener = (urllib.request.build_opener(_NoRedirect()) if proxy_required
+                       else _PersistentHTTPSOpener())
 
     def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         if path not in ALLOWED_PATHS:
@@ -227,15 +234,40 @@ class HttpProvider:
         try:
             with self.opener.open(request, timeout=self.timeout) as response:
                 if response.status != 200:
-                    raise FatalSourceError(f"HTTP_{response.status}")
+                    raise FatalSourceError(f"HTTP_{response.status}_FAIL_CLOSED")
                 raw = response.read(16_000_001)
                 if len(raw) > 16_000_000:
                     raise FatalSourceError("OVERSIZE_RESPONSE")
                 return json.loads(raw)
         except urllib.error.HTTPError as e:
             raise FatalSourceError(f"HTTP_{e.code}_FAIL_CLOSED") from None
-        except (urllib.error.URLError, TimeoutError, OSError, ssl.SSLError, ValueError, json.JSONDecodeError) as e:
+        except (urllib.error.URLError, TimeoutError, OSError, ssl.SSLError, http.client.HTTPException, ValueError, json.JSONDecodeError) as e:
             raise FatalSourceError(f"SOURCE_UNAVAILABLE_{type(e).__name__}") from None
+
+
+class _PersistentHTTPSOpener:
+    """One sequential TLS connection; never follows redirects or retries a GET."""
+    def __init__(self):
+        self.connection = None
+
+    def open(self, request, timeout):
+        url = urllib.parse.urlsplit(request.full_url)
+        base = urllib.parse.urlsplit(BASE_URL)
+        if (url.scheme != 'https' or url.hostname != base.hostname or
+            url.port not in (None, 443) or url.username is not None or
+            url.password is not None or url.fragment or
+            request.get_method() != 'GET' or url.path not in ALLOWED_PATHS):
+            raise FatalSourceError('DISALLOWED_TRANSPORT_TARGET')
+        if self.connection is None:
+            self.connection = http.client.HTTPSConnection(
+                base.hostname, timeout=timeout, context=ssl.create_default_context())
+        target = url.path + ('?' + url.query if url.query else '')
+        try:
+            self.connection.request('GET', target, headers=dict(request.header_items()))
+            return self.connection.getresponse()
+        except (OSError, http.client.HTTPException):
+            self.connection.close()
+            raise
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -411,6 +443,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.pace < 0.15:
         ap.error('production pace cannot be less than 0.15 seconds')
     provider = HttpProvider(pace=args.pace)
+    print(json.dumps({'event':'SOURCE_TRANSPORT', 'transport':type(provider.opener).__name__}),file=sys.stderr)
     try:
         report = scan(provider,max_markets=args.max_markets)
         if report['duration_seconds'] > MAX_SECONDS or report['requests'] > MAX_REQUESTS:
@@ -421,6 +454,7 @@ def main(argv: list[str] | None = None) -> int:
     except (SourceError, ValueError, TypeError, KeyError) as e:
         # Fatal errors do not create or overwrite an attestation receipt.
         print(json.dumps({'status':'FAIL_CLOSED','error':str(e), 'request_count':provider.requests,
+                          'duration_seconds':round(provider.clock()-provider.started,3),
                           'orders_sent':0,'notifications_sent':0}),file=sys.stderr)
         return 2
 

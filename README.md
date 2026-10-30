@@ -2,7 +2,7 @@
 
 ## Security boundary
 
-This is a **standalone, offline-testable source-research package**, not yet an authorized/live production deployment. It does **not** import, copy, publish or modify any proprietary XRAY CORE-18/NASDAQ strategy, never places orders, never emits AL/STOP/2R candidates or notifications, never starts WSS. A separate, inactive-until-published public GitHub Actions workflow is now included for authorized deployment. It only collects public Binance Spot 1H/4H/1D *closed* OHLCV for active USDT symbols and computes descriptive technical indicators. `source_qa_success` is **not** a private-strategy success certificate. Product eligibility is **not established** by an exchange symbol appearing in the identity list or by raw volume/spread.
+This is a **standalone, offline-testable source-research package**, authorized for public source research; full live quality acceptance remains gated. It does **not** import, copy, publish or modify any proprietary XRAY CORE-18/NASDAQ strategy, never places orders, never emits AL/STOP/2R candidates or notifications, never starts WSS. A separate, inactive-until-published public GitHub Actions workflow is now included for authorized deployment. It only collects public Binance Spot 1H/4H/1D *closed* OHLCV for active USDT symbols and computes descriptive technical indicators. `source_qa_success` is **not** a private-strategy success certificate. Product eligibility is **not established** by an exchange symbol appearing in the identity list or by raw volume/spread.
 
 ## Locally run tests
 
@@ -42,6 +42,10 @@ Research scope maximums 250, 400 or 519 select by rolling quote-volume **ranking
 
 ## One-action public source deployment handoff
 
-See [`FINAL_START_AKTIVASYON_TR.md`](FINAL_START_AKTIVASYON_TR.md) and `.github/workflows/hourly-519-public-source.yml`. A newly created **separate public** repository named `gokaydonmez39-jpg/xray-519-source-qa` can stage hourly attempts automatically: 250→400→519 after each persisted stage receipt. The workflow is **not deployed yet**, and standard public GitHub runner usage is free per official documentation; no APNs, WSS, private AL strategy or order execution is introduced. Changes to existing private XRAY, CORE-18, and NASDAQ repositories are forbidden. The new repo requires explicit publication authorization.
+See [`FINAL_START_AKTIVASYON_TR.md`](FINAL_START_AKTIVASYON_TR.md) and `.github/workflows/hourly-519-public-source.yml`. A newly created **separate public** repository named `gokaydonmez39-jpg/xray-519-source-qa` can stage hourly attempts automatically: 250→400→519 after each persisted stage receipt. The workflow is **deployed in the independent public repository**, and standard public GitHub runner usage is free per official documentation; no APNs, WSS, private AL strategy or order execution is introduced. Changes to existing private XRAY, CORE-18, and NASDAQ repositories are forbidden. The new repo requires explicit publication authorization.
 
 The source host is Binance's official anonymous `https://data-api.binance.vision` (market-data-only); this reduces dependency on the regular trading/API hostname without guaranteeing connectivity from any particular GitHub runner.
+
+## Sequential HTTPS transport
+
+Direct standard runners reuse one TLS-verified connection without concurrent requests or automatic retries. Configured HTTPS/all proxy routes retain the original urllib transport. Request pacing, 720-second/1,700-request budgets, source schema, indicators and all quality/strategy boundaries are unchanged. Transport reuse, TLS verification, proxy routing, HTTP 301/418/429/503 rejection, wire failure and a real local persistent socket are covered by tests. 52 tests pass in both regular and optimized Python. First live source pilot: 250 scanned, 248 PASS, 2 WARMUP, zero FAIL, 756 requests, 369.458 seconds, run 41101495291; this is not full 519 quality acceptance.

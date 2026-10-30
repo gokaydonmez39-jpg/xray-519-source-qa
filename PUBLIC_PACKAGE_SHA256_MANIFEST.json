@@ -1,7 +1,7 @@
 {
   "schema": "XRAY_519_SOURCE_ONLY_GITHUB_READY_MANIFEST_V1",
   "date": "2026-10-30",
-  "status": "AUDITED_LOCAL_AWAITING_PUBLICATION_APPROVAL_NOT_DEPLOYED",
+  "status": "SOURCE_TRANSPORT_TESTED_52_PENDING_GITHUB_519_ACCEPTANCE",
   "files": {
     ".github/workflows/hourly-519-public-source.yml": {
       "bytes": 2625,
@@ -12,16 +12,16 @@
       "sha256": "abecc8f7cb879bd83972d6ce32e3968676198db074d7221963b6f3d4930fc1e3"
     },
     "README.md": {
-      "bytes": 6047,
-      "sha256": "55f22ab13e586b5eb6bc2ab7aa784500e6f8950ba33bf282ed1b25fc6a2a1188"
+      "bytes": 6810,
+      "sha256": "2cb47d20d94e329293b7cf3df86653f23f733e789dd4f1c4040d3ddc1674779d"
     },
     "publish_receipt.py": {
       "bytes": 7557,
       "sha256": "24023583fd7d729d5a883db2559d7965cc5a3284fedeb229f64f8ce5c3ef2b86"
     },
     "research_519.py": {
-      "bytes": 19509,
-      "sha256": "962d789e2b084701e787ad9101161e1cd7d8b8a67fa69d8f65059a3b5c3c3f92"
+      "bytes": 21375,
+      "sha256": "7d932e877e8b02acbfc396ef852c6614627883d3e0a7cdae47907f7e2fcff4e7"
     },
     "select_scope.py": {
       "bytes": 1947,
@@ -50,6 +50,10 @@
     "tests/test_source.py": {
       "bytes": 9874,
       "sha256": "3f06fd3c41e8b59a013ada1b4b9dc3e34cfddd6ee5f2abc8e05c8cd36a260526"
+    },
+    "tests/test_transport.py": {
+      "bytes": 6366,
+      "sha256": "907d8ad62c8a6feb34472212de698ac4159f6d8871320a7ac0b01dcfe7d267fa"
     },
     "verify_epoch_pair.py": {
       "bytes": 3936,
