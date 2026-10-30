@@ -22,6 +22,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any
+from bridge_519 import BridgeCollector, COUNTS as BRIDGE_COUNTS, atomic_gzip
 
 HOUR = 3_600_000
 DAY = 24 * HOUR
@@ -290,7 +291,8 @@ def _ticker_map(rows: Any, required: list[str]) -> dict[str, dict[str, Any]]:
     return lookup
 
 
-def scan(provider: Any, *, max_markets: int | None = None) -> dict[str, Any]:
+def scan(provider: Any, *, max_markets: int | None = None,
+         bridge_sink: BridgeCollector | None = None) -> dict[str, Any]:
     if max_markets is not None and (type(max_markets) is not int or max_markets < 1 or max_markets > 519):
         raise ValueError("INVALID_MARKET_LIMIT")
     begun = time.monotonic()
@@ -328,7 +330,16 @@ def scan(provider: Any, *, max_markets: int | None = None) -> dict[str, Any]:
         # a truthful 3-frame request count without mixing valid and invalid data.
         for interval, required in COUNTS.items():
             raw = provider.get('/api/v3/klines', {'symbol':symbol, 'interval':interval,
-                                                 'limit':required, 'endTime':deadlines[interval]})
+                                                 'limit':(BRIDGE_COUNTS[interval] if bridge_sink is not None else required),
+                                                 'endTime':deadlines[interval]})
+            if bridge_sink is not None:
+                try:
+                    extended = parse_candles(raw, period=PERIODS[interval],
+                                             expected=deadlines[interval],
+                                             required=BRIDGE_COUNTS[interval])
+                    bridge_sink.put(symbol, interval, extended)
+                except (Warmup, QualityError) as exc:
+                    bridge_sink.mark(symbol, interval, str(exc))
             try:
                 bars[interval] = parse_candles(raw, period=PERIODS[interval],
                                                expected=deadlines[interval], required=required)
@@ -380,7 +391,7 @@ def scan(provider: Any, *, max_markets: int | None = None) -> dict[str, Any]:
     count_ok = sum(counts.values()) == len(chosen)
     full_inventory = len(chosen) == identity_count
     no_qa_errors = counts['FAIL'] == 0
-    return {
+    report = {
       "schema":SCHEMA,"source":"BINANCE_PUBLIC_SPOT_REST","run_kind":"RESEARCH_ONLY_NO_AL",
       "http_provider_used":type(provider) is HttpProvider,
       "live_source_acceptance":(type(provider) is HttpProvider and full_inventory and
@@ -401,6 +412,9 @@ def scan(provider: Any, *, max_markets: int | None = None) -> dict[str, Any]:
       "requests":getattr(provider,'requests',None),"duration_seconds":round(duration,3),
       "results":results
     }
+    if bridge_sink is not None:
+        bridge_sink.finish(report)
+    return report
 
 
 def atomic_json(path: Path, report: dict[str, Any]) -> None:
@@ -438,17 +452,28 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description='READ-ONLY closed-candle Spot/USDT technical source scan')
     ap.add_argument('--max-markets',type=int,choices=(250,400,519),default=519)
     ap.add_argument('--output',type=Path,required=True)
+    ap.add_argument('--bridge-output',type=Path,default=None)
     ap.add_argument('--pace',type=float,default=0.15)
     args = ap.parse_args(argv)
     if args.pace < 0.15:
         ap.error('production pace cannot be less than 0.15 seconds')
+    if args.bridge_output is not None and args.max_markets != 519:
+        ap.error('bridge requires complete 519-identity scope and does not support partial scans')
+    if args.bridge_output is not None and args.bridge_output == args.output:
+        ap.error('bridge must never overwrite source receipt')
     provider = HttpProvider(pace=args.pace)
+    bridge_sink = BridgeCollector() if args.bridge_output is not None else None
     print(json.dumps({'event':'SOURCE_TRANSPORT', 'transport':type(provider.opener).__name__}),file=sys.stderr)
     try:
-        report = scan(provider,max_markets=args.max_markets)
+        report = scan(provider,max_markets=args.max_markets,bridge_sink=bridge_sink)
         if report['duration_seconds'] > MAX_SECONDS or report['requests'] > MAX_REQUESTS:
             raise FatalSourceError('END_OF_RUN_BUDGET_EXCEEDED')
         atomic_json(args.output, report)
+        if bridge_sink is not None:
+            checksum, nbytes = atomic_gzip(args.bridge_output, bridge_sink.document)
+            print(json.dumps({'event':'PUBLIC_INPUT_BRIDGE_PREPARED_NOT_PRIVATE_AL',
+                              'sha256':checksum,'bytes':nbytes,
+                              'eligible_raw_source_markets':bridge_sink.document['exported_symbols']}),file=sys.stderr)
         print(json.dumps({k:v for k,v in report.items() if k != 'results'},ensure_ascii=False))
         return 0 if report['source_qa_success'] else 2
     except (SourceError, ValueError, TypeError, KeyError) as e:
