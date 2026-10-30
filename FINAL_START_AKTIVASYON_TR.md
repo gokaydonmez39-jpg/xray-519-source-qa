@@ -14,7 +14,7 @@ Bu belge herhangi bir deponun oluşturulduğunu veya gerçek Actions çalıştı
 
 Kaynak kod, testler ve `.github/workflows/hourly-519-public-source.yml` birlikte aktarılır.
 Workflow standart `ubuntu-24.04` runner kullanır; ücretli runner, artifact/cache yükleme ve ödeme kurulumu içermez.
-Planlı çalışmalar UTC `23 * * * *` zamanlamasını dener; GitHub geciktirebilir veya atlayabilir.
+Planlı çalışmalar UTC `17 * * * *` zamanlamasını dener; GitHub geciktirebilir veya atlayabilir.
 250 → 400 → 519 kapsam ilerlemesi yalnız geçerli makbuzlardan yapılır.
 Elle başlatma aynı üç kapsamı destekler; arka arkaya başlatmalar iki ayrı saat kanıtı oluşturmaz.
 
@@ -33,3 +33,7 @@ Spot/USDT kimliği ekonomik ürün sınıflandırması veya özel AL uygunluğu 
 
 - https://docs.github.com/en/billing/concepts/product-billing/github-actions
 - https://github.com/binance/binance-spot-api-docs/blob/master/faqs/market_data_only.md
+
+## 30 Ekim 2026 — native GitHub schedule yeniden eşitleme denemesi
+
+GitHub Actions native schedule denemelerinde 519/519 tam gerçek kaynak taraması elde edilmesine rağmen beş GitHub run'un tamamı `workflow_dispatch` idi; native `schedule` olayı gözlenmedi. GitHub'ın resmi Actions troubleshoot belgesinde bazı aktif workflow'larda cron değişikliğiyle scheduled actor kaydının tekrar etkinleştirilebildiği açıklanır. Bu nedenle yalnız cron dakikası UTC `23` yerine `17` olarak değiştirildi. Çalışan kaynak tarama kodu, testler, sınırlamalar, private strateji ve eski depolar değiştirilmedi. Kullanıcıya yeni maliyet veya yeni sunucu bağlanmadı. Bu commit bir `schedule` run'ının oluştuğunun kanıtı değildir. İlk gerçek `schedule` run kaydı ve buna bağlı yeni makbuz uzak GitHub üzerinde geri okunmadan `NATIVE_SCHEDULE_PASS` verilmez; GitHub'ın gecikme/atlama olasılığı devam eder. Saatlik ChatGPT denetim görevinde :35 TRT kontrolü korunur.
