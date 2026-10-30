@@ -14,7 +14,7 @@ Bu belge herhangi bir deponun oluşturulduğunu veya gerçek Actions çalıştı
 
 Kaynak kod, testler ve `.github/workflows/hourly-519-public-source.yml` birlikte aktarılır.
 Workflow standart `ubuntu-24.04` runner kullanır; ücretli runner, artifact/cache yükleme ve ödeme kurulumu içermez.
-Planlı çalışmalar UTC `17 * * * *` zamanlamasını dener; GitHub geciktirebilir veya atlayabilir.
+Planlı çalışmalar UTC `4 * * * *` zamanlamasını dener; GitHub geciktirebilir veya atlayabilir.
 250 → 400 → 519 kapsam ilerlemesi yalnız geçerli makbuzlardan yapılır.
 Elle başlatma aynı üç kapsamı destekler; arka arkaya başlatmalar iki ayrı saat kanıtı oluşturmaz.
 
@@ -43,3 +43,7 @@ GitHub Actions native schedule denemelerinde 519/519 tam gerçek kaynak taramas�
 An independently testable module is staged for a public-only Binance Spot source bridge: 100 closed 1H, 70 closed 4H, 60 closed daily bars, and 60 BTC daily bars. Existing source quality acceptance remains 100/40/40 and every instrument is still counted. A raw 15m USDT/15bps source subset may be exported to a compact immutable public gzip bound to the original source receipt SHA256. This **does not** run or publish private AL logic, open orders, or enable notifications.
 
 The staged native workflow can trigger once on a reviewed code release via path-filtered `push` (receipt commits cannot recur). It still also has `schedule` UTC :17, which is not guaranteed and has not been accepted as reliable by deployment alone. The private compute handoff and its zero-fee GitHub budget safety remain separate HOLD gates. User approval is required before public/private live deployment and any change that could incur a charge.
+
+## 30 Ekim 2026 — özel 15 dakikalık tazelik kapısı için erken kaynak çalıştırma
+
+Public kaynak işi GH run 41123970185 üzerinde 519/519 Spot/USDT envanterini 1563 GET ile yaklaşık 237 saniyede doğruladı. Kaynak köprüsünün uzak SHA256 geri okuması PASS; 50 piyasa için 100 kapalı 1H, 70 kapalı 4H ve 60 kapalı 1D mum hazır. Bu bir AL sinyali DEĞİLDİR. UTC :17 planlaması, public taramanın ancak yaklaşık :21'de bitmesi nedeniyle özgün 15 dakika AL tazelik kapısıyla uyumlu değildi. Bu nedenle gelecek saatler için tek native schedule UTC :04 olarak değiştirildi; GitHub geciktirebilir/atlayabilir. Eski 17>4 değişikliği yalnız saat planlamasıdır; CORE-18 veya private strateji değişmez. Workflow push paths içinden workflow YML kendisi çıkarılmıştır; yalnız saat yenileme merge'i aynı saat kaynak makbuzunu tekrar taramak üzere tetiklemez. Public source release kod değişiklikleri ise ayrı ve kontrollü push tetikleme yolunu korur. İlk native :04 GitHub schedule çalışması ve private gölge hesaplaması gerçek run/makbuz ile kanıtlanana kadar HOLD'dur.
