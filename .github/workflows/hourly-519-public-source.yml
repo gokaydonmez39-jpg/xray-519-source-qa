@@ -10,6 +10,8 @@ on:
       - 'research_519.py'
       - 'bridge_519.py'
       - 'publish_bridge.py'
+      # Explicit, create-only hourly fallback when GitHub native cron is skipped.
+      - 'ops/source-kicks/*.json'
   workflow_dispatch:
     inputs:
       max_markets:
