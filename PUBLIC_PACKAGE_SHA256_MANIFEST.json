@@ -1,0 +1,63 @@
+{
+  "schema": "XRAY_519_SOURCE_ONLY_GITHUB_READY_MANIFEST_V1",
+  "date": "2026-10-30",
+  "status": "AUDITED_LOCAL_AWAITING_PUBLICATION_APPROVAL_NOT_DEPLOYED",
+  "files": {
+    ".github/workflows/hourly-519-public-source.yml": {
+      "bytes": 2625,
+      "sha256": "dd08677e19ece6418ab045476577d4700867aea9339320377d68147e5b074f73"
+    },
+    "FINAL_START_AKTIVASYON_TR.md": {
+      "bytes": 2089,
+      "sha256": "abecc8f7cb879bd83972d6ce32e3968676198db074d7221963b6f3d4930fc1e3"
+    },
+    "README.md": {
+      "bytes": 6047,
+      "sha256": "55f22ab13e586b5eb6bc2ab7aa784500e6f8950ba33bf282ed1b25fc6a2a1188"
+    },
+    "publish_receipt.py": {
+      "bytes": 7557,
+      "sha256": "24023583fd7d729d5a883db2559d7965cc5a3284fedeb229f64f8ce5c3ef2b86"
+    },
+    "research_519.py": {
+      "bytes": 19509,
+      "sha256": "962d789e2b084701e787ad9101161e1cd7d8b8a67fa69d8f65059a3b5c3c3f92"
+    },
+    "select_scope.py": {
+      "bytes": 1947,
+      "sha256": "72d50ac75b91f02a6fe2d953d1bae2dc3842b2f254d0ea3a0585f4e36e6d9e3f"
+    },
+    "tests/test_final_start.py": {
+      "bytes": 3346,
+      "sha256": "2347e990ed80063b54d001de23ddfb68f15f80bb58745a2094a3508b4b8f37ba"
+    },
+    "tests/test_pair.py": {
+      "bytes": 1740,
+      "sha256": "8eb52102b3ed15ce79dbd4688d8baf24d7e9f17be5a41eda0b24cfbe0005b5c3"
+    },
+    "tests/test_publish.py": {
+      "bytes": 3504,
+      "sha256": "d832519011fd53037bef6da210b9f8da1931aeaad47b03e1ce28dcf7975da7c4"
+    },
+    "tests/test_remote_pair.py": {
+      "bytes": 2146,
+      "sha256": "f86771234364c0e051238699704bcd4552d733fafc24d7f7cb9f0ff8e4a618d2"
+    },
+    "tests/test_select.py": {
+      "bytes": 1927,
+      "sha256": "351bab4cc14fa8a5e7774ea7a8d7ec1eb476c1104e3c46a3f02e969a127b2713"
+    },
+    "tests/test_source.py": {
+      "bytes": 9874,
+      "sha256": "3f06fd3c41e8b59a013ada1b4b9dc3e34cfddd6ee5f2abc8e05c8cd36a260526"
+    },
+    "verify_epoch_pair.py": {
+      "bytes": 3936,
+      "sha256": "da43e8f58068152ea16064a68f3fb518ed5dc0edc9b3159b8a6bb9385789c244"
+    },
+    "verify_remote_pair.py": {
+      "bytes": 1945,
+      "sha256": "d0739b671024de1a36cd478b4e42e11a6bd847fedf02e727137d1fb418b789f0"
+    }
+  }
+}

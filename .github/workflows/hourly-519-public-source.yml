@@ -1,0 +1,71 @@
+name: XRAY 519 public Spot closed-bar research
+
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+    inputs:
+      max_markets:
+        description: 'Optional manual scope; scheduled jobs auto-stage 250 → 400 → 519'
+        type: choice
+        required: true
+        default: '250'
+        options:
+          - '250'
+          - '400'
+          - '519'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: xray-public-source-main
+  cancel-in-progress: false
+
+jobs:
+  source-only:
+    if: github.repository == 'gokaydonmez39-jpg/xray-519-source-qa' && github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 17
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Checkout independent public research repo
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # verified signed v4 commit as of 2026-10-30
+        with:
+          persist-credentials: true
+          fetch-depth: 1
+      - name: Run security regression tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -q
+          python3 -O -m unittest discover -s tests -q
+      - name: Read-only Binance scan, immutable receipt and independent readback
+        shell: bash
+        env:
+          MODE_INPUT: ${{ inputs.max_markets }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = schedule ]; then
+            MODE="$(python3 select_scope.py)"
+          else
+            case "$MODE_INPUT" in 250|400|519) MODE="$MODE_INPUT" ;; *) exit 2 ;; esac
+          fi
+          OUT="$RUNNER_TEMP/source-receipt.json"
+          python3 research_519.py --max-markets "$MODE" --output "$OUT" --pace 0.15
+          mapfile -t DETAILS < <(python3 publish_receipt.py --input "$OUT" --mode "$MODE")
+          if [ "${#DETAILS[@]}" -ne 2 ]; then exit 2; fi
+          FILE="${DETAILS[0]}"
+          EXPECTED="${DETAILS[1]}"
+          test -f "$FILE"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- "$FILE"
+          git commit -m "research: append immutable $MODE closed-bar receipt [skip ci]"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git fetch origin "${GITHUB_REF_NAME}"
+          ACTUAL="$(git show "origin/${GITHUB_REF_NAME}:${FILE}" | sha256sum | cut -d' ' -f1)"
+          test "$ACTUAL" = "$EXPECTED"
+          printf 'RECEIPT_REMOTE_READBACK_PASS path=%s sha256=%s mode=%s\n' "$FILE" "$ACTUAL" "$MODE"
+          python3 verify_remote_pair.py
