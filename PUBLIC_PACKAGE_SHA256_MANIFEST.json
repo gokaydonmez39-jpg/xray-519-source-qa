@@ -4,12 +4,12 @@
   "status": "TWO_HOURLY_SOURCE_COVERAGE_VERIFIED_FULL_QUALITY_HOLD",
   "files": {
     ".github/workflows/hourly-519-public-source.yml": {
-      "bytes": 4419,
-      "sha256": "e6a3b8435a1400ec9cf51a260de607f84fecab9d075d14cc8e1288a1b7b7b262"
+      "bytes": 4361,
+      "sha256": "4924c207556358f983abd3af75ad9122d3559ff94ef38900adfca74a5ab2fa42"
     },
     "FINAL_START_AKTIVASYON_TR.md": {
-      "bytes": 4072,
-      "sha256": "afae5bc96d627c965c33357e43f7f9d86aec7097374cff41c444978bda78f9a8"
+      "bytes": 5195,
+      "sha256": "dec2b94ccb6f9fe73d0c3173191607076c5afe3f6aaec6f3411bd891bf9971b2"
     },
     "README.md": {
       "bytes": 10838,
