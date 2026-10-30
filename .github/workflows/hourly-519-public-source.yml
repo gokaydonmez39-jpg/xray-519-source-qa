@@ -2,7 +2,7 @@ name: XRAY 519 public Spot closed-bar research
 
 on:
   schedule:
-    - cron: '17 * * * *'
+    - cron: '4 * * * *'
   # Run one new-source epoch after a reviewed code release; receipt pushes never retrigger.
   push:
     branches: [main]
@@ -10,7 +10,6 @@ on:
       - 'research_519.py'
       - 'bridge_519.py'
       - 'publish_bridge.py'
-      - '.github/workflows/hourly-519-public-source.yml'
   workflow_dispatch:
     inputs:
       max_markets:
