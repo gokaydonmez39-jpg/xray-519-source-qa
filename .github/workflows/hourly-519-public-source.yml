@@ -2,7 +2,7 @@ name: XRAY 519 public Spot closed-bar research
 
 on:
   schedule:
-    - cron: '23 * * * *'
+    - cron: '17 * * * *'
   workflow_dispatch:
     inputs:
       max_markets:
