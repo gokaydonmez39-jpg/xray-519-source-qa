@@ -1,0 +1,38 @@
+name: XRAY 519 bridge source-only CI
+on:
+  push:
+    branches: [feature-private-input-bridge-20261030]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline-bridge:
+    if: github.repository == 'gokaydonmez39-jpg/xray-519-source-qa' && github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Checkout public-only code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Compile public source
+        run: python3 -m compileall -q bridge_519.py publish_bridge.py research_519.py tests
+      - name: Run complete research and bridge regression twice
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -q
+          python3 -O -m unittest discover -s tests -q
+      - name: Confirm no trade endpoint was introduced
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import research_519 as r
+          assert set(r.ALLOWED_PATHS)=={
+              '/api/v3/time','/api/v3/exchangeInfo','/api/v3/ticker/24hr',
+              '/api/v3/ticker/bookTicker','/api/v3/klines'}
+          assert r.COUNTS == {'1h':100,'4h':40,'1d':40}
+          assert r.BRIDGE_COUNTS == {'1h':100,'4h':70,'1d':60}
+          print('BRIDGE_SOURCE_ONLY_PASS')
+          PY
