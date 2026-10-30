@@ -10,7 +10,7 @@ from pathlib import Path
 from verify_epoch_pair import validate_pair
 
 
-def audit(root: Path) -> tuple[bool,str,list[str]]:
+def audit(root: Path, *, allow_warmup: bool=False) -> tuple[bool,str,list[str]]:
     receipts=[]
     for path in (root/'receipts').glob('*/*/*/*-n519.json.gz'):
         try:
@@ -33,14 +33,21 @@ def audit(root: Path) -> tuple[bool,str,list[str]]:
     a,b=receipts[-2:]
     if a['public_runner']['run_id']==b['public_runner']['run_id']:
         return False,'SAME_GITHUB_RUN_NOT_INDEPENDENT',[]
-    success,problems=validate_pair(a,b)
-    return success,'TWO_EPOCH_519_SOURCE_QUALITY_PASS' if success else 'TWO_EPOCH_HOLD',problems
+    success,problems=validate_pair(a,b,allow_warmup=allow_warmup)
+    label=('TWO_EPOCH_519_SOURCE_COVERAGE_PASS' if allow_warmup
+           else 'TWO_EPOCH_519_SOURCE_QUALITY_PASS')
+    return success,label if success else 'TWO_EPOCH_HOLD',problems
 
 
 if __name__=='__main__':
     import sys
     result,status,problems=audit(Path('.'))
+    coverage,coverage_status,coverage_issues=audit(Path('.'),allow_warmup=True)
     print(json.dumps({'result':status,'source_qa_verified':result,
+                      'source_coverage_verified':coverage,
+                      'source_coverage_status':coverage_status,
+                      'source_coverage_issues':coverage_issues,
+                      'not_remote_authentication':True,
                       'private_AL_verified':False,'continuous_wss_verified':False,
                       'iPhone_delivery_verified':False,'issues':problems}))
     # First hour is normal; do not fail the source job solely for lacking two periods.
