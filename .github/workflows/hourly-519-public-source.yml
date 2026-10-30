@@ -52,6 +52,19 @@ jobs:
           else
             case "$MODE_INPUT" in 250|400|519) MODE="$MODE_INPUT" ;; *) exit 2 ;; esac
           fi
+          # BEGIN_SOURCE_PREFLIGHT
+          git fetch origin "${GITHUB_REF_NAME}"
+          if [ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/${GITHUB_REF_NAME}")" ]; then
+            printf 'FAIL_CLOSED STALE_WORKFLOW_HEAD_NO_SCAN\n'
+            exit 2
+          fi
+          CANDIDATE="receipts/$(date -u +%Y/%m/%d/%Y%m%dT%H00Z)-n${MODE}.json.gz"
+          if [ -e "$CANDIDATE" ] || [ -L "$CANDIDATE" ]; then
+            printf 'FAIL_CLOSED DUPLICATE_EPOCH_NO_SCAN\n'
+            exit 2
+          fi
+          printf 'SOURCE_PREFLIGHT_ALLOW_SCAN\n'
+          # END_SOURCE_PREFLIGHT
           OUT="$RUNNER_TEMP/source-receipt.json"
           python3 research_519.py --max-markets "$MODE" --output "$OUT" --pace 0.15
           mapfile -t DETAILS < <(python3 publish_receipt.py --input "$OUT" --mode "$MODE")
