@@ -1,7 +1,7 @@
 name: XRAY 519 bridge source-only CI
 on:
   push:
-    branches: [feature-private-input-bridge-20261030]
+    branches: [feature-private-input-bridge-20261030, xray-p30-public-schedule-recovery-20261031]
   workflow_dispatch:
 permissions:
   contents: read
