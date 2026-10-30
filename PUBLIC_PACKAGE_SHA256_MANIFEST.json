@@ -4,12 +4,12 @@
   "status": "TWO_HOURLY_SOURCE_COVERAGE_VERIFIED_FULL_QUALITY_HOLD",
   "files": {
     ".github/workflows/hourly-519-public-source.yml": {
-      "bytes": 4361,
-      "sha256": "4924c207556358f983abd3af75ad9122d3559ff94ef38900adfca74a5ab2fa42"
+      "bytes": 4477,
+      "sha256": "b6191b478b360f0931e63af69f08228f31b855555d07cc807384136faf4b829c"
     },
     "FINAL_START_AKTIVASYON_TR.md": {
-      "bytes": 5195,
-      "sha256": "dec2b94ccb6f9fe73d0c3173191607076c5afe3f6aaec6f3411bd891bf9971b2"
+      "bytes": 6627,
+      "sha256": "f5f6ef3d406ed970f7d81815b8f08d47e2d7d39833c6ef0fc8e5177377c32834"
     },
     "README.md": {
       "bytes": 10838,
@@ -72,8 +72,8 @@
       "sha256": "0fe9c5c33edff31a8a5d26f2da036f5ff10db85b462e2e8677c5f8bc1821a33b"
     },
     ".github/workflows/bridge-source-ci.yml": {
-      "bytes": 1408,
-      "sha256": "0100d56243f8c7180a1c39748f8bc4a04a9d99bc957b6975b5cb15f5f8d10556"
+      "bytes": 1452,
+      "sha256": "c5d0a4d1f8af6bdcc38e63b883923db2e9fca44c9bb4ae309c9a09cc76944d50"
     },
     "bridge_519.py": {
       "bytes": 8408,
@@ -86,6 +86,10 @@
     "tests/test_bridge_integration.py": {
       "bytes": 3714,
       "sha256": "2429972875fd4137cb30735a4b02342a8457b79c9c4a5c320d9fa8bc84b9e1ee"
+    },
+    "tests/test_source_kick_fallback.py": {
+      "bytes": 1582,
+      "sha256": "013566e450ce87cb03d765e86d334c457d3022242f8bd9c067354618408ac0d6"
     }
   }
 }
