@@ -54,3 +54,31 @@ Run locally without any network:
 ```
 python3 warmup_receipt_audit.py --receipt receipts/2026/10/31/20261031T0600Z-n519.json.gz
 ```
+
+
+## Measured root cause — two real persisted Binance source receipts
+Real, independent GitHub CI Run [41221505649](https://github.com/gokaydonmez39-jpg/xray-519-source-qa/actions/runs/41221505649) read **both persisted public** 2026-10-31 00:00 UTC and 06:00 UTC receipts (no new Binance request).
+
+Each receipt independently contains 519 distinct source rows:
+**489 PASS / 30 WARMUP / 0 FAIL**. All 30 WARMUP source rows have a
+short **1D closed-candle history**. At 06:00 UTC the exact 1D
+short-history distribution is:
+`3/40: 5, 10/40: 5, 17/40: 4, 18/40: 1, 24/40: 4,
+31/40: 7, 37/40: 1, 38/40: 3`; sum **30**. Exactly five of these
+also have short 1H and 4H history: across the 00:00 -> 06:00 UTC
+receipts, 1H increases `60/100 -> 66/100` and 4H
+`15/40 -> 16/40`. Daily history does not improve over those six
+hours because the next UTC day had not closed.
+
+**Disposition:** historical shortfall is real, not an ingestion gap to
+repair by inventing missing candles. Retain WARMUP until independently
+observed enough fully closed daily history, preserve 519 coverage
+distinct from 519 quality, and keep private strategy execution
+and real phone delivery separate. Counts are for those two specific
+dated observations only; no claim of later auto-maturation.
+The public source `source_qa_success=true` means no corrupt
+scan/source failure; it does **not** mean full technical 519 PASS.
+
+This PR additionally rejects a receipt that simultaneously reports
+any WARMUP and claims `full_technical_quality=true` or
+`live_source_acceptance=true` (false-green regression).
