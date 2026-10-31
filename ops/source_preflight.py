@@ -14,6 +14,7 @@ import io
 import json
 import re
 import subprocess
+from pathlib import Path
 
 from warmup_receipt_audit import ReceiptInvalid, summarize
 
@@ -191,9 +192,13 @@ def assess(mode, stamp, local="HEAD", remote="origin/main"):
             raise PreflightBlocked("SOURCE_CHANGED")
     if mode == "519" and _pair(remote, entries, mode, stamp):
         return ALREADY_PUBLISHED
+    candidate = f"receipts/{stamp[:4]}/{stamp[4:6]}/{stamp[6:8]}/{stamp}-n{mode}.json.gz"
+    # A local untracked file must never be overwritten or treated as a scan
+    # opportunity; a remote authentic pair was already checked above.
+    if Path(candidate).exists() or Path(candidate).is_symlink():
+        raise PreflightBlocked("DUPLICATE_EPOCH_NO_SCAN")
     if l != r:
         raise PreflightBlocked("STALE_HEAD_WITHOUT_VALID_EPOCH")
-    candidate = f"receipts/{stamp[:4]}/{stamp[4:6]}/{stamp[6:8]}/{stamp}-n{mode}.json.gz"
     if candidate in entries:
         raise PreflightBlocked("DUPLICATE_EPOCH_UNVERIFIED")
     return ALLOW_SCAN
