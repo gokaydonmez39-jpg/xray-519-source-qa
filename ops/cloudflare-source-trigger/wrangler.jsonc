@@ -1,0 +1,17 @@
+{
+  "name": "xray-519-public-source-trigger",
+  "main": "./worker.mjs",
+  "compatibility_date": "2026-10-20",
+  "workers_dev": false,
+  "triggers": {
+    "crons": ["1 * * * *"]
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "SOURCE_DISPATCH_LOCK", "class_name": "SourceDispatchLock" }
+    ]
+  },
+  "exports": {
+    "SourceDispatchLock": { "type": "durable-object", "storage": "sqlite" }
+  }
+}
