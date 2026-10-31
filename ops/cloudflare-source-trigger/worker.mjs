@@ -21,10 +21,17 @@ export class SourceDispatchLock extends DurableObject {
       scheduledTime: message?.scheduledTime,
       nowMs: Date.now(),
       token: this.env.GITHUB_ACTIONS_DISPATCH_TOKEN,
-      reserve: (epoch, nowMs) => sql.exec(
-        'INSERT OR IGNORE INTO dispatch_epoch(epoch,reserved_at,state) VALUES(?,?,?)',
-        epoch, nowMs, 'RESERVED',
-      ).rowsWritten === 1,
+      reserve: (epoch, nowMs) => {
+        // SqlStorageCursor.rowsWritten may not be final before cursor consumption.
+        // Atomically return the inserted key; only a newly created epoch may dispatch.
+        // Historical RESERVED rows stay locked: no DELETE, reset or retry.
+        const inserted = sql.exec(
+          'INSERT INTO dispatch_epoch(epoch,reserved_at,state) VALUES(?,?,?) ' +
+          'ON CONFLICT(epoch) DO NOTHING RETURNING epoch',
+          epoch, nowMs, 'RESERVED',
+        ).toArray();
+        return inserted.length === 1 && inserted[0].epoch === epoch;
+      },
       mark: async (epoch, state) => { sql.exec('UPDATE dispatch_epoch SET state=? WHERE epoch=?', state, epoch); },
       githubFetch: (url, options) => fetch(url, { ...options, redirect: 'error', signal: AbortSignal.timeout(6000) }),
     });
