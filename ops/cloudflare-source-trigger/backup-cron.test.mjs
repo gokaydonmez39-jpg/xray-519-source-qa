@@ -139,3 +139,30 @@ test('no private references, no credential emission and no destructive lock oper
   assert.ok(!combined.includes('xray-crypto-godzilla-omega'));
   assert.equal(t.sqlCalls.some(c=>/DELETE|DROP TABLE|UPDATE dispatch_epoch SET reserved_at/i.test(c.statement)),false);
 });
+
+test('actual scheduled() accepts :06 and rejects mismatched Cron minute without touching Durable Object', async()=>{
+  const source=fs.readFileSync(new URL('./worker.mjs',import.meta.url),'utf8')
+    .replace("import { DurableObject } from 'cloudflare:workers';", 'class DurableObject {}')
+    .replace("import { executeOnce } from './dispatch-core.mjs';", 'const executeOnce = async()=>{};')
+    .replace('export class SourceDispatchLock','class SourceDispatchLock')
+    .replace('export default {','const workerEntry = {');
+  const logs=[],errors=[];
+  const ctx={Response,Date,console:{log:(...v)=>logs.push(v),error:(...v)=>errors.push(v)}};
+  vm.runInNewContext(source+'\nglobalThis.TargetWorker = workerEntry;',ctx);
+  let calls=0, noRetry=0;
+  const env={SOURCE_DISPATCH_LOCK:{
+    idFromName:()=> 'xray-519-singleton',
+    get:()=>({fetch:async()=>{calls++;return {status:200,json:async()=>({decision:'EXISTING_SOURCE_RUN'})};}})
+  }};
+  const backup={cron:'6 * * * *',scheduledTime:hour+360_000,noRetry:()=>{noRetry++;}};
+  await ctx.TargetWorker.scheduled(backup,env,{});
+  assert.equal(calls,1);
+  assert.equal(noRetry,0);
+  assert.ok(logs.some(x=>x.includes('XRAY_PUBLIC_DISPATCH_CRON_RESULT')));
+
+  const mismatched={cron:'1 * * * *',scheduledTime:hour+360_000,noRetry:()=>{noRetry++;}};
+  await assert.rejects(ctx.TargetWorker.scheduled(mismatched,env,{}),/XRAY_PUBLIC_DISPATCH_CRON_MINUTE_MISMATCH/);
+  assert.equal(calls,1,'minute mismatch must never touch SQLite lock');
+  assert.equal(noRetry,1);
+  assert.ok(errors.some(x=>x.includes('XRAY_PUBLIC_DISPATCH_CRON_MINUTE_MISMATCH')));
+});
