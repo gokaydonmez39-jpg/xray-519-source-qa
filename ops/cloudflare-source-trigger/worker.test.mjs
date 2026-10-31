@@ -5,6 +5,9 @@ import fs from 'node:fs';
 const cfg=JSON.parse(fs.readFileSync(new URL('./wrangler.jsonc',import.meta.url),'utf8'));
 test('UTC :01 cron and SQLite lock on Free-compatible configuration',()=>{
   assert.deepEqual(cfg.triggers.crons,['1 * * * *']);
+  // Cloudflare live Observability (2026-10-31) identifies this exact script.
+  // A mismatch can deploy a second Worker rather than repair the existing one.
+  assert.equal(cfg.name, 'xray-519-source-qa');
   assert.equal(cfg.durable_objects.bindings[0].class_name,'SourceDispatchLock');
   assert.equal(cfg.exports.SourceDispatchLock.storage,'sqlite');
   assert.equal(cfg.workers_dev,false);
