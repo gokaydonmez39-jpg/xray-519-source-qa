@@ -12,16 +12,24 @@ export const CONFIG = Object.freeze({
 const API = `https://api.github.com/repos/${CONFIG.repository}`;
 
 export function epochOf(scheduledTime, nowMs) {
-  if (!Number.isSafeInteger(scheduledTime) || !Number.isSafeInteger(nowMs) ||
-      scheduledTime < 0 || scheduledTime % CONFIG.hourMs !== CONFIG.offsetMs) {
+  if (!Number.isSafeInteger(scheduledTime) || !Number.isSafeInteger(nowMs) || scheduledTime < 0) {
     return { ok: false, code: 'INVALID_SCHEDULE' };
   }
+  // Cloudflare's scheduledTime is milliseconds but may be :01:SS.mmm rather than
+  // the exact nominal :01:00.000. Never accept a different UTC cron minute.
+  const hour = Math.floor(scheduledTime / CONFIG.hourMs) * CONFIG.hourMs;
+  const scheduledOffset = scheduledTime - hour;
+  if (scheduledOffset < CONFIG.offsetMs || scheduledOffset >= CONFIG.offsetMs + 60_000) {
+    return { ok: false, code: 'INVALID_SCHEDULE' };
+  }
+  // Bound freshness from NOMINAL :01, not the delayed Cloudflare event time.
+  // This prevents a late :01:59.999 event from extending the 90-second window.
   const delay = nowMs - scheduledTime;
-  if (delay < -CONFIG.maxFutureMs || delay > CONFIG.maxDelayMs ||
+  const sinceNominalCron = nowMs - (hour + CONFIG.offsetMs);
+  if (delay < -CONFIG.maxFutureMs || sinceNominalCron > CONFIG.maxDelayMs ||
       Math.floor(nowMs / CONFIG.hourMs) !== Math.floor(scheduledTime / CONFIG.hourMs)) {
     return { ok: false, code: 'STALE_OR_EARLY_CRON' };
   }
-  const hour = Math.floor(scheduledTime / CONFIG.hourMs) * CONFIG.hourMs;
   const iso = new Date(hour).toISOString();
   return {
     ok: true, epoch: iso.slice(0, 13) + ':00:00Z',

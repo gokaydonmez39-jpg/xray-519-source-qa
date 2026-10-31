@@ -47,3 +47,42 @@ test('network uncertainty is fail-closed',async()=>{const t=mock({throwOn:'/disp
 test('204 without run id is NOT a source success claim',async()=>{const t=mock({dispatchStatus:204});assert.equal((await t.run()).decision,'DISPATCH_ACCEPTED_NOT_SOURCE_PASS')});
 test('concurrent requests reserve same key once',async()=>{const t=mock();const r=await Promise.all([t.run(),t.run()]);assert.equal(r.filter(x=>x.decision==='DISPATCH_ACCEPTED_NOT_SOURCE_PASS').length,1)});
 test('unrelated old runs do not block the scoped source workflow',async()=>{const t=mock({runs:Array.from({length:100},(_,i)=>({id:i}))});assert.equal((await t.run()).decision,'DISPATCH_ACCEPTED_NOT_SOURCE_PASS')});
+
+
+test('actual Cloudflare Cron scheduledTime at :01:45.563 retains correct UTC source hour', async () => {
+  const actualHour = Date.parse('2026-10-31T13:00:00Z');
+  const s = actualHour + 105_563; // Cloudflare invocation observed at 16:01:45.563 GMT+3
+  const n = actualHour + 106_801;
+  assert.deepEqual(epochOf(s, n), {
+    ok: true, epoch: '2026-10-31T13:00:00Z',
+    stamp: '20261031T1300Z', dir: '2026/10/31', startMs: actualHour,
+  });
+  const t = mock();
+  t.arg.scheduledTime = s;
+  t.arg.nowMs = n;
+  assert.equal((await t.run()).decision, 'DISPATCH_ACCEPTED_NOT_SOURCE_PASS');
+  assert.equal((await t.run()).decision, 'DUPLICATE_EPOCH_LOCKED');
+  assert.equal(t.calls.filter(c => c.method === 'POST').length, 1);
+});
+
+test('delayed :01 Cron timestamps never relax 90-second nominal freshness', async () => {
+  const s = hour + 119_999;
+  assert.equal(epochOf(s, hour + 150_000).ok, true);
+  assert.equal(epochOf(s, hour + 150_001).code, 'STALE_OR_EARLY_CRON');
+  const late = mock();
+  late.arg.scheduledTime = s;
+  late.arg.nowMs = hour + 150_001;
+  assert.equal((await late.run()).decision, 'STALE_OR_EARLY_CRON');
+  assert.equal(late.calls.length, 0);
+});
+
+test('reject adjacent minutes, future events, noninteger and wrong UTC hour', async () => {
+  for (const offset of [0, 59_999, 120_000, 180_000, 3_599_999]) {
+    assert.equal(epochOf(hour + offset, hour + offset).code, 'INVALID_SCHEDULE');
+  }
+  assert.equal(epochOf(hour + 105_563, hour + 100_562).code, 'STALE_OR_EARLY_CRON');
+  assert.equal(epochOf(hour + 105_563, hour + 3_600_000).code, 'STALE_OR_EARLY_CRON');
+  for (const invalid of [null, undefined, 1_793_451_705.563, NaN, Infinity, -1, '1793451705563']) {
+    assert.equal(epochOf(invalid, hour + 106_000).code, 'INVALID_SCHEDULE');
+  }
+});
