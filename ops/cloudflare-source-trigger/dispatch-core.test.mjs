@@ -9,7 +9,12 @@ function mock({receipt=404,runs=[],listStatus=200,dispatchStatus=200,throwOn='' 
     calls.push({url,method:opts.method,headers:opts.headers,body:opts.body});
     if(throwOn&&url.includes(throwOn))throw Error('network');
     if(url.includes('/contents/'))return {status:receipt};
-    if(url.includes('/actions/runs?'))return {status:listStatus,json:async()=>({workflow_runs:runs})};
+    if(url.includes('/runs?')){
+      const q=new URL(url).searchParams;
+      const selected=runs.filter(r=>r.workflow_id===CONFIG.workflowId&&r.head_branch==='main')
+        .filter(r=>q.has('created') ? Date.parse(r.created_at)>=hour : r.status===q.get('status'));
+      return {status:listStatus,json:async()=>({total_count:selected.length,workflow_runs:selected.slice(0,1)})};
+    }
     if(url.includes('/dispatches'))return {status:dispatchStatus,json:async()=>({workflow_run_id:789})};
     throw Error('unexpected');
   };
@@ -41,4 +46,4 @@ test('dispatch API error is locked, not retried',async()=>{const t=mock({dispatc
 test('network uncertainty is fail-closed',async()=>{const t=mock({throwOn:'/dispatches'});assert.equal((await t.run()).decision,'GITHUB_NETWORK_OR_RESPONSE_UNKNOWN');assert.equal((await t.run()).decision,'DUPLICATE_EPOCH_LOCKED')});
 test('204 without run id is NOT a source success claim',async()=>{const t=mock({dispatchStatus:204});assert.equal((await t.run()).decision,'DISPATCH_ACCEPTED_NOT_SOURCE_PASS')});
 test('concurrent requests reserve same key once',async()=>{const t=mock();const r=await Promise.all([t.run(),t.run()]);assert.equal(r.filter(x=>x.decision==='DISPATCH_ACCEPTED_NOT_SOURCE_PASS').length,1)});
-test('GitHub list of 100 creates pagination ambiguity block',async()=>{const t=mock({runs:Array.from({length:100},(_,i)=>({id:i}))});assert.equal((await t.run()).decision,'GITHUB_RUNS_INDETERMINATE')});
+test('unrelated old runs do not block the scoped source workflow',async()=>{const t=mock({runs:Array.from({length:100},(_,i)=>({id:i}))});assert.equal((await t.run()).decision,'DISPATCH_ACCEPTED_NOT_SOURCE_PASS')});

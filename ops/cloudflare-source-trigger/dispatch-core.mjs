@@ -71,25 +71,39 @@ export async function executeOnce({ scheduledTime, nowMs, token, reserve, mark, 
     if (receipt.status === 200) return await state('EXISTING_SOURCE_RECEIPT');
     if (receipt.status !== 404) return await state('SOURCE_RECEIPT_LOOKUP_UNAVAILABLE', { httpStatus: receipt.status });
 
-    const listUrl = `${API}/actions/runs?per_page=100`;
-    const runs = await githubFetch(listUrl, { method: 'GET', headers: headers() });
-    if (runs.status !== 200) return await state('GITHUB_RUNS_UNAVAILABLE', { httpStatus: runs.status });
-    const data = await runs.json();
-    if (!data || !Array.isArray(data.workflow_runs) || data.workflow_runs.length >= 100) {
-      return await state('GITHUB_RUNS_INDETERMINATE');
-    }
-    for (const run of data.workflow_runs) {
-      if (run.workflow_id !== CONFIG.workflowId || run.head_branch !== 'main') continue;
-      const created = Date.parse(run.created_at);
+    // Existence queries scoped to this workflow avoid the repository's first-100
+    // history trap. A positive count blocks immediately; proving absence requires
+    // a consistent zero count and empty page. Pagination is never needed.
+    const activeStatuses = ['queued', 'in_progress', 'waiting', 'requested', 'pending'];
+    const queries = [
+      { created: '>=' + time.epoch },
+      ...activeStatuses.map(status => ({ status })),
+    ];
+    for (const query of queries) {
+      const params = new URLSearchParams({ branch: 'main', per_page: '1', ...query });
+      const listUrl = `${API}/actions/workflows/${CONFIG.workflowFile}/runs?${params}`;
+      const runs = await githubFetch(listUrl, { method: 'GET', headers: headers() });
+      if (runs.status !== 200) return await state('GITHUB_RUNS_UNAVAILABLE', { httpStatus: runs.status });
+      const data = await runs.json();
+      if (!data || !Number.isSafeInteger(data.total_count) || data.total_count < 0 ||
+          !Array.isArray(data.workflow_runs) ||
+          data.workflow_runs.length !== Math.min(data.total_count, 1)) {
+        return await state('GITHUB_RUNS_INDETERMINATE');
+      }
+      if (data.total_count === 0) continue;
+      const run = data.workflow_runs[0];
+      if (!run || !Number.isSafeInteger(run.id) || run.id <= 0 ||
+          run.workflow_id !== CONFIG.workflowId || run.head_branch !== 'main') {
+        return await state('GITHUB_RUNS_INDETERMINATE');
+      }
+      const created = typeof run.created_at === 'string' ? Date.parse(run.created_at) : NaN;
       if (!Number.isFinite(created)) return await state('GITHUB_RUN_TIME_INVALID');
-      // Skip if this source workflow has started in the same UTC epoch, including scheduled or manual.
-      if (created >= time.startMs && created <= nowMs + 30_000) {
-        return await state('EXISTING_SOURCE_RUN', { runId: run.id });
+      if (created > nowMs + 30_000 ||
+          (query.created && created < time.startMs) ||
+          (query.status && run.status !== query.status)) {
+        return await state('GITHUB_RUNS_INDETERMINATE');
       }
-      // Avoid concurrent old epochs competing for the source-only workflow concurrency group.
-      if (run.status === 'queued' || run.status === 'in_progress' || run.status === 'waiting') {
-        return await state('SOURCE_RUN_ALREADY_ACTIVE', { runId: run.id });
-      }
+      return await state(query.created ? 'EXISTING_SOURCE_RUN' : 'SOURCE_RUN_ALREADY_ACTIVE', { runId: run.id });
     }
     const dispatchUrl = `${API}/actions/workflows/${CONFIG.workflowFile}/dispatches`;
     const response = await githubFetch(dispatchUrl, {
