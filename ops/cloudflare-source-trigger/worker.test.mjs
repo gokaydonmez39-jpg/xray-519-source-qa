@@ -109,7 +109,7 @@ test('wrong Cron expression is refused before any Durable Object invocation', as
 function auditHarness({ decision = 'DUPLICATE_EPOCH_LOCKED', rows = {}, throwRead = false } = {}) {
   const logs = [], sqlCalls = [];
   const src = fs.readFileSync(new URL('./worker.mjs', import.meta.url), 'utf8')
-    .replace("import { DurableObject } from 'cloudflare:workers';',
+    .replace("import { DurableObject } from 'cloudflare:workers';",
       'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }')
     .replace("import { executeOnce } from './dispatch-core.mjs';",
       'const executeOnce = async () => ({decision: "' + decision + '", stamp: "20261031T1400Z"});')
