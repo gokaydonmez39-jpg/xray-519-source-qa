@@ -50,6 +50,14 @@ class ReceiptDiagnosis(unittest.TestCase):
         self.doc["results"][-1]["frame_quality"]["4h"]="FAIL_GAP"
         with self.assertRaisesRegex(ReceiptInvalid,"WARMUP_FRAME_INCONSISTENT"):
             summarize(self.doc)
+    def test_forged_full_quality_or_live_flag_rejected(self):
+        for flag in ("full_technical_quality","live_source_acceptance"):
+            with self.subTest(flag=flag):
+                doc=copy.deepcopy(self.doc)
+                doc[flag]=True
+                with self.assertRaisesRegex(ReceiptInvalid,"FALSE_FULL_QUALITY_OR_LIVE_FLAG"):
+                    summarize(doc)
+
     def test_duplicate_symbol_fails(self):
         self.doc["results"][-1]["symbol"]=self.doc["results"][0]["symbol"]
         with self.assertRaisesRegex(ReceiptInvalid,"DUPLICATE_OR_BAD_SYMBOL"):
