@@ -101,6 +101,8 @@ def summarize(doc):
         raise ReceiptInvalid("HEADER_ROWS_DISAGREE")
     if sum(counts.values())!=519:
         raise ReceiptInvalid("ACCOUNTING_MISMATCH")
+    if counts["PASS"]!=519 and (doc.get("full_technical_quality") is True or doc.get("live_source_acceptance") is True):
+        raise ReceiptInvalid("FALSE_FULL_QUALITY_OR_LIVE_FLAG")
     return {
         "schema":"XRAY_PUBLIC_519_WARMUP_AUDIT_V1",
         "source_receipt_epoch_ms":doc.get("utc_closed_epoch_1h_ms"),
