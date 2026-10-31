@@ -20,11 +20,11 @@ test('primary and secondary Cloudflare cron have distinct times, one UTC source 
   assert.equal(epochOf(hour + 360_000, hour + 450_001).code, 'STALE_OR_EARLY_CRON');
 });
 
-function system({ failFirstStage = false, priorState = null, backupStatus = 204 } = {}) {
+function system({ failFirstStage = false, failNetworkOnce = false, priorState = null, backupStatus = 204 } = {}) {
   const rows = new Map();
   if (priorState) rows.set(epoch, { epoch, reserved_at: hour + 61_000, state: priorState });
   const calls = [], sqlCalls = [], logs = [];
-  let nowMs = hour + 66_000, receiptStatus = failFirstStage ? 503 : 404;
+  let nowMs = hour + 66_000, receiptStatus = failFirstStage ? 503 : 404, networkFailed = false;
   const sql = {
     exec(statement, ...args) {
       sqlCalls.push({ statement, args });
@@ -67,7 +67,7 @@ function system({ failFirstStage = false, priorState = null, backupStatus = 204 
   const clock=class extends Date { static now(){return nowMs;} };
   const fetchStub=async(url, options)=>{
     calls.push({url, method:options?.method, redirect:options?.redirect});
-    if(url.includes('/contents/')) return { status:receiptStatus };
+    if(url.includes('/contents/')) { if (failNetworkOnce && !networkFailed) { networkFailed = true; throw Error('simulated Cloudflare GET timeout'); } return { status:receiptStatus }; }
     if(url.includes('/runs?')) return {status:200,json:async()=>({total_count:0,workflow_runs:[]})};
     if(url.includes('/dispatches')) return {status:backupStatus,json:async()=>({workflow_run_id:123})};
     throw Error('UNEXPECTED_GITHUB_URL');
@@ -165,4 +165,17 @@ test('actual scheduled() accepts :06 and rejects mismatched Cron minute without 
   assert.equal(calls,1,'minute mismatch must never touch SQLite lock');
   assert.equal(noRetry,1);
   assert.ok(errors.some(x=>x.includes('XRAY_PUBLIC_DISPATCH_CRON_MINUTE_MISMATCH')));
+});
+
+test('primary GET timeout before GitHub POST recovers safely at :06 with CAS single winner',async()=>{
+  const t=system({failNetworkOnce:true});
+  assert.equal(await t.invoke(60_000),'GITHUB_PRE_DISPATCH_NETWORK_ERROR');
+  assert.equal(t.rows.get(epoch).state,'GITHUB_PRE_DISPATCH_NETWORK_ERROR');
+  assert.equal(t.calls.filter(c=>c.method==='POST').length,0);
+  assert.equal(await t.invoke(360_000),'DISPATCH_ACCEPTED_NOT_SOURCE_PASS');
+  assert.equal(t.rows.get(epoch).state,'BACKUP_DISPATCH_ACCEPTED_NOT_SOURCE_PASS');
+  assert.equal(t.rows.get(epoch).reserved_at,hour+61_000);
+  assert.equal(await t.invoke(360_000),'DUPLICATE_EPOCH_LOCKED');
+  assert.equal(t.calls.filter(c=>c.method==='POST').length,1);
+  assert.equal(t.sqlCalls.filter(c=>/DELETE|DROP TABLE/.test(c.statement)).length,0);
 });
