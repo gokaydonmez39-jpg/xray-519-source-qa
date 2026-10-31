@@ -49,6 +49,16 @@ class TestPITIntegrity(unittest.TestCase):
                 with self.assertRaises(GateError):
                     validate_rows([bad], asof_ms=T0+HOUR)
 
+    def test_unreviewed_features_and_missing_fields_rejected(self):
+        injected = row(0)
+        injected["feature_future_best_close"] = 999999.0
+        with self.assertRaises(GateError):
+            validate_rows([injected], asof_ms=T0 + HOUR)
+        missing = row(0)
+        missing.pop("feature_available_ms")
+        with self.assertRaises(GateError):
+            validate_rows([missing], asof_ms=T0 + HOUR)
+
     def test_no_future_realized_label_at_asof(self):
         with self.assertRaises(GateError):
             validate_rows([row(0)], asof_ms=T0+HOUR-1)
