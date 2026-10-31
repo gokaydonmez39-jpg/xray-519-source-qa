@@ -76,6 +76,9 @@ export async function executeOnce({ scheduledTime, nowMs, token, reserve, mark, 
   }
   const receiptPath = `receipts/${time.dir}/${time.stamp}-n519.json.gz`;
   const receiptUrl = `${API}/contents/${receiptPath}?ref=main`;
+  // Network failures during GET can never have dispatched a run. Only the
+  // exact transition to POST makes subsequent network outcomes ambiguous.
+  let dispatchPostAttempted = false;
   try {
     const receipt = await githubFetch(receiptUrl, { method: 'GET', headers: headers() });
     if (receipt.status === 200) return await state('EXISTING_SOURCE_RECEIPT');
@@ -116,6 +119,7 @@ export async function executeOnce({ scheduledTime, nowMs, token, reserve, mark, 
       return await state(query.created ? 'EXISTING_SOURCE_RUN' : 'SOURCE_RUN_ALREADY_ACTIVE', { runId: run.id });
     }
     const dispatchUrl = `${API}/actions/workflows/${CONFIG.workflowFile}/dispatches`;
+    dispatchPostAttempted = true;
     const response = await githubFetch(dispatchUrl, {
       method: 'POST',
       headers: { ...headers(token), 'Content-Type': 'application/json' },
@@ -132,6 +136,8 @@ export async function executeOnce({ scheduledTime, nowMs, token, reserve, mark, 
     }
     return await state('DISPATCH_ACCEPTED_NOT_SOURCE_PASS', { runId, sourceEpoch: time.epoch });
   } catch {
-    return await state('GITHUB_NETWORK_OR_RESPONSE_UNKNOWN');
+    return await state(dispatchPostAttempted
+      ? 'GITHUB_NETWORK_OR_RESPONSE_UNKNOWN'
+      : 'GITHUB_PRE_DISPATCH_NETWORK_ERROR');
   }
 }
