@@ -33,7 +33,7 @@ export class SourceDispatchLock extends DurableObject {
         return inserted.length === 1 && inserted[0].epoch === epoch;
       },
       mark: async (epoch, state) => { sql.exec('UPDATE dispatch_epoch SET state=? WHERE epoch=?', state, epoch); },
-      githubFetch: (url, options) => fetch(url, { ...options, redirect: 'error', signal: AbortSignal.timeout(6000) }),
+      githubFetch: (url, options) => fetch(url, { ...options, redirect: 'manual', signal: AbortSignal.timeout(6000) }),
     });
     // Read-only SQLite diagnostics: a duplicate lock does not prove that a
     // GitHub dispatch happened. Inspect previous/current reservation state

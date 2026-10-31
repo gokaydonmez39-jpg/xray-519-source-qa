@@ -1,5 +1,5 @@
 {
-  "name": "xray-519-public-source-trigger",
+  "name": "xray-519-source-qa",
   "main": "./worker.mjs",
   "compatibility_date": "2026-10-20",
   "workers_dev": false,

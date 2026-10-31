@@ -86,3 +86,20 @@ test('reject adjacent minutes, future events, noninteger and wrong UTC hour', as
     assert.equal(epochOf(invalid, hour + 106_000).code, 'INVALID_SCHEDULE');
   }
 });
+
+test('HTTP 3xx is fail-closed at all GitHub stages', async () => {
+  const cases = [
+    { options: { receipt: 302 }, expected: 'SOURCE_RECEIPT_LOOKUP_UNAVAILABLE', post: false },
+    { options: { listStatus: 307 }, expected: 'GITHUB_RUNS_UNAVAILABLE', post: false },
+    { options: { dispatchStatus: 308 }, expected: 'DISPATCH_REJECTED', post: true },
+  ];
+  for (const { options, expected, post } of cases) {
+    const t = mock(options);
+    const first = await t.run();
+    assert.equal(first.decision, expected);
+    assert.equal(t.calls.some(c => c.method === 'POST'), post);
+    const count = t.calls.length;
+    assert.equal((await t.run()).decision, 'DUPLICATE_EPOCH_LOCKED');
+    assert.equal(t.calls.length, count, 'redirect failures must not be retried');
+  }
+});

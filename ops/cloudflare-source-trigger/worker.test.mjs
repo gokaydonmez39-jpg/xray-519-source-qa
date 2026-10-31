@@ -5,6 +5,9 @@ import fs from 'node:fs';
 const cfg=JSON.parse(fs.readFileSync(new URL('./wrangler.jsonc',import.meta.url),'utf8'));
 test('UTC :01 cron and SQLite lock on Free-compatible configuration',()=>{
   assert.deepEqual(cfg.triggers.crons,['1 * * * *']);
+  // Cloudflare live Observability (2026-10-31) identifies this exact script.
+  // A mismatch can deploy a second Worker rather than repair the existing one.
+  assert.equal(cfg.name, 'xray-519-source-qa');
   assert.equal(cfg.durable_objects.bindings[0].class_name,'SourceDispatchLock');
   assert.equal(cfg.exports.SourceDispatchLock.storage,'sqlite');
   assert.equal(cfg.workers_dev,false);
@@ -14,7 +17,8 @@ test('Worker has no HTTP public dispatch route, private strategy or order path',
   const src=fs.readFileSync(new URL('./worker.mjs',import.meta.url),'utf8');
   assert.match(src,/fetch\(\) \{ return new Response\('Not found', \{ status: 404 \}\)/);
   assert.match(src,/ON CONFLICT\(epoch\) DO NOTHING RETURNING epoch/);
-  assert.match(src,/redirect: 'error'/);
+  assert.match(src,/redirect: 'manual'/);
+  assert.doesNotMatch(src,/redirect: '(?:error|follow)'/);
   assert.doesNotMatch(src,/api\/v3\/order|xray-crypto-godzilla-omega/);
 });
 
@@ -226,7 +230,9 @@ test('real Worker reserve: first RETURNING accepted with rowsWritten=' + reporte
   const nowMs = Date.parse('2026-10-31T15:01:46.902Z');
   class Clock extends Date { static now() { return nowMs; } }
   const fetchStub = async (url, opts) => {
-    requests.push({ url, method: opts.method });
+    // Mirror Cloudflare's Fetch restriction, which Node's global fetch does not enforce.
+    if (opts.redirect !== 'manual') throw new TypeError('CLOUDFLARE_UNSUPPORTED_REDIRECT_MODE');
+    requests.push({ url, method: opts.method, redirect: opts.redirect });
     if (url.includes('/contents/')) return { status: 404 };
     if (url.includes('/runs?')) return {
       status: 200, json: async () => ({ total_count: 0, workflow_runs: [] }),
