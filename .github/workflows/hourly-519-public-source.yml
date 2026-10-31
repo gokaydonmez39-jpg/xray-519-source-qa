@@ -3,6 +3,9 @@ name: XRAY 519 public Spot closed-bar research
 on:
   schedule:
     - cron: '4 * * * *'
+    # Independent native opportunity if GitHub drops/delays :04.
+    # Existing single concurrency group + authenticated same-hour no-op prevent extra scans.
+    - cron: '8 * * * *'
   # Run one new-source epoch after a reviewed code release; receipt pushes never retrigger.
   push:
     branches: [main]
