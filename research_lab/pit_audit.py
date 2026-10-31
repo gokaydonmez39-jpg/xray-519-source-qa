@@ -41,12 +41,16 @@ def validate_rows(rows: Sequence[Mapping], *, asof_ms: int) -> list[dict]:
     """
     if not _integer(asof_ms) or not isinstance(rows, (tuple, list)) or not rows:
         raise GateError("INVALID_ASOF_OR_EMPTY_INPUT")
+    allowed_fields = set(_REQUIRED_TIME) | set(_REQUIRED_PRICE) | {"symbol"}
     validated: list[dict] = []
     seen: set[tuple[str, int]] = set()
     previous_key: tuple[int, str] | None = None
     for item in rows:
         if not isinstance(item, dict):
             raise GateError("BAD_ROW")
+        # Prevent unreviewed columns from silently bypassing point-in-time gates.
+        if set(item) != allowed_fields:
+            raise GateError("UNREVIEWED_FEATURE_SCHEMA")
         symbol = item.get("symbol")
         if not isinstance(symbol, str) or not _SYMBOL.fullmatch(symbol):
             raise GateError("BAD_SYMBOL")
