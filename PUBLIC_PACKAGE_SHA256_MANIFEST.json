@@ -108,8 +108,8 @@
       "sha256": "013cbc442b63a08422e2495333ccf92750ebef0174cc6864c3aeaceb29360b01"
     },
     "ops/cloudflare-source-trigger/worker.test.mjs": {
-      "bytes": 13140,
-      "sha256": "e368e6deae36859ddf341f9b0988e4ee7faa18b50457985b92ee0b9b5a81a3c4"
+      "bytes": 13500,
+      "sha256": "f1820e87de0ceab5b34c9630b8a8fefb04286dc120b758a62b9bf6a1a8c9932e"
     },
     "ops/cloudflare-source-trigger/README_TR.md": {
       "bytes": 5926,
