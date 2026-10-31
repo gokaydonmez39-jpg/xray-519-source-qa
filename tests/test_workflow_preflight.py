@@ -34,7 +34,7 @@ class WorkflowPreflightTests(unittest.TestCase):
         self.bin = self.root/'bin'
         self.bin.mkdir()
         date = self.bin/'date'
-        date.write_text('#!/bin/sh\\nprintf "20261030T1800Z\\\\n"\\n')
+        date.write_text('#!/bin/sh\nprintf "20261030T1800Z\\n"\n')
         date.chmod(0o755)
 
     @staticmethod
