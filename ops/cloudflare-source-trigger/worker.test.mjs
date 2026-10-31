@@ -186,13 +186,16 @@ test('nonduplicate logs previous epoch only without exposing current lock', asyn
 });
 
 
-test('real Worker reserve adapter: first INSERT RETURNING accepted when rowsWritten initially zero, next epoch duplicate blocked', async () => {
+for (const reportedRowsWritten of [0, 2]) {
+test('real Worker reserve: first RETURNING accepted with rowsWritten=' + reportedRowsWritten + ', duplicate blocked', async () => {
   // Regression for 2026-10-31 15:01:46.902 UTC: the original adapter persisted
   // RESERVED but reported DUPLICATE_EPOCH_LOCKED in the same invocation.
   // This SQL fake intentionally exposes a pre-consumption rowsWritten=0, like
   // a lazy cursor. The only trustworthy result is the RETURNING row itself.
   const { executeOnce } = await import('./dispatch-core.mjs');
   const records = new Map(), requests = [], writes = [], logs = [];
+  const previous = '2026-10-31T14:00:00Z';
+  records.set(previous, {epoch: previous, reserved_at: 1793455306844, state: 'RESERVED'});
   const db = {
     exec(query, ...args) {
       if (query.startsWith('CREATE TABLE')) return { rowsWritten: 0, toArray: () => [] };
@@ -202,7 +205,7 @@ test('real Worker reserve adapter: first INSERT RETURNING accepted when rowsWrit
         if (fresh) records.set(epoch, { epoch, reserved_at, state });
         writes.push({ operation: 'INSERT', epoch, fresh });
         return {
-          rowsWritten: 0, // Not a final affected-row count until cursor consumed.
+          rowsWritten: reportedRowsWritten, // May include indexed writes or be pre-consumption.
           toArray: () => query.includes('RETURNING epoch') && fresh ? [{ epoch }] : [],
         };
       }
@@ -262,7 +265,11 @@ test('real Worker reserve adapter: first INSERT RETURNING accepted when rowsWrit
   assert.equal((await second.json()).decision, 'DUPLICATE_EPOCH_LOCKED');
   assert.equal(requests.filter(x => x.method === 'POST').length, 1);
   assert.equal(writes.filter(x => x.operation === 'INSERT' && x.fresh).length, 1);
-  assert.equal(records.size, 1);
+  assert.equal(records.size, 2);
+  assert.equal(records.get(previous).state, 'RESERVED');
+  assert.equal(records.get(previous).reserved_at, 1793455306844);
+  assert.equal(logs[0].previousLock.state, 'RESERVED');
   assert.equal(logs[1].duplicateLock.state, 'DISPATCH_ACCEPTED_NOT_SOURCE_PASS');
   assert.ok(!writes.some(x => x.operation === 'DELETE'));
 });
+}
