@@ -28,8 +28,46 @@ export class SourceDispatchLock extends DurableObject {
       mark: async (epoch, state) => { sql.exec('UPDATE dispatch_epoch SET state=? WHERE epoch=?', state, epoch); },
       githubFetch: (url, options) => fetch(url, { ...options, redirect: 'error', signal: AbortSignal.timeout(6000) }),
     });
-    // No secrets or market signals in audit output.
-    console.log(JSON.stringify({ event: 'XRAY_PUBLIC_DISPATCH', ...result }));
+    // Read-only SQLite diagnostics: a duplicate lock does not prove that a
+    // GitHub dispatch happened. Inspect previous/current reservation state
+    // without releasing, retrying, or editing the single-dispatch lock.
+    const safeStates = new Set([
+      'RESERVED', 'DISPATCH_ACCEPTED_NOT_SOURCE_PASS',
+      'EXISTING_SOURCE_RECEIPT', 'EXISTING_SOURCE_RUN',
+      'SOURCE_RUN_ALREADY_ACTIVE', 'SOURCE_RECEIPT_LOOKUP_UNAVAILABLE',
+      'GITHUB_RUNS_UNAVAILABLE', 'GITHUB_RUNS_INDETERMINATE',
+      'GITHUB_RUN_TIME_INVALID', 'DISPATCH_REJECTED',
+      'GITHUB_NETWORK_OR_RESPONSE_UNKNOWN', 'POST_RESERVATION_AUDIT_FAILURE',
+    ]);
+    function readLock(epoch) {
+      try {
+        const row = sql.exec(
+          'SELECT state, reserved_at FROM dispatch_epoch WHERE epoch=? LIMIT 1',
+          epoch,
+        ).toArray()[0];
+        if (!row) return { state: 'ABSENT' };
+        return {
+          state: safeStates.has(row.state) ? row.state : 'UNKNOWN_STATE',
+          reservedAtMs: Number.isSafeInteger(row.reserved_at) ? row.reserved_at : null,
+        };
+      } catch {
+        return { state: 'READBACK_UNAVAILABLE' };
+      }
+    }
+    const fields = {};
+    const raw = message?.scheduledTime;
+    if (Number.isSafeInteger(raw) && raw >= 3_600_000) {
+      const hourMs = Math.floor(raw / 3_600_000) * 3_600_000;
+      const prevEpoch = new Date(hourMs - 3_600_000).toISOString().slice(0, 13) + ':00:00Z';
+      fields.previousEpoch = prevEpoch;
+      fields.previousLock = readLock(prevEpoch);
+      if (result.decision === 'DUPLICATE_EPOCH_LOCKED') {
+        const currentEpoch = new Date(hourMs).toISOString().slice(0, 13) + ':00:00Z';
+        fields.duplicateLock = readLock(currentEpoch);
+      }
+    }
+    // No secrets, private strategy, or market signals in audit output.
+    console.log(JSON.stringify({ event: 'XRAY_PUBLIC_DISPATCH', ...result, ...fields }));
     return Response.json(result);
   }
 }
