@@ -13,7 +13,7 @@ test('UTC :01 cron and SQLite lock on Free-compatible configuration',()=>{
 test('Worker has no HTTP public dispatch route, private strategy or order path',()=>{
   const src=fs.readFileSync(new URL('./worker.mjs',import.meta.url),'utf8');
   assert.match(src,/fetch\(\) \{ return new Response\('Not found', \{ status: 404 \}\)/);
-  assert.match(src,/INSERT OR IGNORE INTO dispatch_epoch/);
+  assert.match(src,/ON CONFLICT\(epoch\) DO NOTHING RETURNING epoch/);
   assert.match(src,/redirect: 'error'/);
   assert.doesNotMatch(src,/api\/v3\/order|xray-crypto-godzilla-omega/);
 });
@@ -183,4 +183,86 @@ test('nonduplicate logs previous epoch only without exposing current lock', asyn
   assert.equal(h.logs[0].previousLock.state,'EXISTING_SOURCE_RUN');
   assert.equal(h.logs[0].duplicateLock,undefined);
   assert.equal(h.sqlCalls.filter(c => c.query.startsWith('SELECT')).length,1);
+});
+
+
+test('real Worker reserve adapter: first INSERT RETURNING accepted when rowsWritten initially zero, next epoch duplicate blocked', async () => {
+  // Regression for 2026-10-31 15:01:46.902 UTC: the original adapter persisted
+  // RESERVED but reported DUPLICATE_EPOCH_LOCKED in the same invocation.
+  // This SQL fake intentionally exposes a pre-consumption rowsWritten=0, like
+  // a lazy cursor. The only trustworthy result is the RETURNING row itself.
+  const { executeOnce } = await import('./dispatch-core.mjs');
+  const records = new Map(), requests = [], writes = [], logs = [];
+  const db = {
+    exec(query, ...args) {
+      if (query.startsWith('CREATE TABLE')) return { rowsWritten: 0, toArray: () => [] };
+      if (query.startsWith('INSERT ')) {
+        const [epoch, reserved_at, state] = args;
+        const fresh = !records.has(epoch);
+        if (fresh) records.set(epoch, { epoch, reserved_at, state });
+        writes.push({ operation: 'INSERT', epoch, fresh });
+        return {
+          rowsWritten: 0, // Not a final affected-row count until cursor consumed.
+          toArray: () => query.includes('RETURNING epoch') && fresh ? [{ epoch }] : [],
+        };
+      }
+      if (query.startsWith('UPDATE dispatch_epoch')) {
+        const [state, epoch] = args;
+        if (!records.has(epoch)) throw Error('UNEXPECTED_MISSING_RESERVATION');
+        records.get(epoch).state = state;
+        writes.push({ operation: 'UPDATE', epoch });
+        return { rowsWritten: 0, toArray: () => [] };
+      }
+      if (query.startsWith('SELECT state, reserved_at')) {
+        const row = records.get(args[0]);
+        return { toArray: () => row ? [{ state: row.state, reserved_at: row.reserved_at }] : [] };
+      }
+      throw Error('UNEXPECTED_SQL');
+    },
+  };
+  const nowMs = Date.parse('2026-10-31T15:01:46.902Z');
+  class Clock extends Date { static now() { return nowMs; } }
+  const fetchStub = async (url, opts) => {
+    requests.push({ url, method: opts.method });
+    if (url.includes('/contents/')) return { status: 404 };
+    if (url.includes('/runs?')) return {
+      status: 200, json: async () => ({ total_count: 0, workflow_runs: [] }),
+    };
+    if (url.includes('/dispatches')) return {
+      status: 200, json: async () => ({ workflow_run_id: 123456 }),
+    };
+    throw Error('UNEXPECTED_NETWORK');
+  };
+  const source = fs.readFileSync(new URL('./worker.mjs', import.meta.url), 'utf8')
+    .replace("import { DurableObject } from 'cloudflare:workers';",
+      'class DurableObject { constructor(ctx, env) { this.ctx=ctx; this.env=env; } }')
+    .replace("import { executeOnce } from './dispatch-core.mjs';",
+      'const executeOnce = globalThis.injectedExecuteOnce;')
+    .replace('export class SourceDispatchLock', 'class SourceDispatchLock')
+    .replace('export default {', 'const workerEntry = {');
+  const ctx = {
+    Response, Request, URL, AbortSignal, Date: Clock, injectedExecuteOnce: executeOnce,
+    fetch: fetchStub, console: { log: s => logs.push(JSON.parse(s)), error: () => {} },
+  };
+  vm.runInNewContext(source + '\nglobalThis.LockClass=SourceDispatchLock;', ctx);
+  const object = new ctx.LockClass({ storage: { sql: db } }, {
+    GITHUB_ACTIONS_DISPATCH_TOKEN: 'TEST_TOKEN_NEVER_REAL_0123456789',
+  });
+  const makeRequest = () => new Request('https://internal/trigger', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scheduledTime: nowMs }),
+  });
+  const first = await object.fetch(makeRequest());
+  assert.equal((await first.json()).decision, 'DISPATCH_ACCEPTED_NOT_SOURCE_PASS');
+  const epoch = '2026-10-31T15:00:00Z';
+  assert.equal(records.get(epoch).state, 'DISPATCH_ACCEPTED_NOT_SOURCE_PASS');
+  assert.equal(records.get(epoch).reserved_at, nowMs);
+  const second = await object.fetch(makeRequest());
+  assert.equal((await second.json()).decision, 'DUPLICATE_EPOCH_LOCKED');
+  assert.equal(requests.filter(x => x.method === 'POST').length, 1);
+  assert.equal(writes.filter(x => x.operation === 'INSERT' && x.fresh).length, 1);
+  assert.equal(records.size, 1);
+  assert.equal(logs[1].duplicateLock.state, 'DISPATCH_ACCEPTED_NOT_SOURCE_PASS');
+  assert.ok(!writes.some(x => x.operation === 'DELETE'));
 });
