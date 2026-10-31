@@ -92,8 +92,8 @@
       "sha256": "013566e450ce87cb03d765e86d334c457d3022242f8bd9c067354618408ac0d6"
     },
     "ops/cloudflare-source-trigger/dispatch-core.mjs": {
-      "bytes": 5528,
-      "sha256": "c6c39e54c65d53cc437a809ecdb9b438d9a14f9eb963ec2aa3a3f244649eafce"
+      "bytes": 6271,
+      "sha256": "b72511e5746b6652f232ce2a452927589a8995190131650b1b95b939b31dff31"
     },
     "ops/cloudflare-source-trigger/worker.mjs": {
       "bytes": 2076,
@@ -104,20 +104,24 @@
       "sha256": "a975c95d866f7cb626500c45b4fbb9190a1b1f1ef00c9a3656e1bfecd5801f9b"
     },
     "ops/cloudflare-source-trigger/dispatch-core.test.mjs": {
-      "bytes": 4321,
-      "sha256": "610e9e79adda4380f804408f5a8518031b98e7df08055d68171e3c2f17fef9f0"
+      "bytes": 4619,
+      "sha256": "931dbdabf13ab3391c53b3970323868a3d04e9b775eddf0ef04c810c79ac4bbf"
     },
     "ops/cloudflare-source-trigger/worker.test.mjs": {
       "bytes": 990,
       "sha256": "23863cf11ec9fc1f0312cd4bacc5c53884c13587ddd9b63e5b93040198ae0bba"
     },
     "ops/cloudflare-source-trigger/README_TR.md": {
-      "bytes": 5339,
-      "sha256": "ccfb34fa8156a657c46485ca7506c1dfe46bbb0799cc504614fd552b17f3c8db"
+      "bytes": 5926,
+      "sha256": "cba59af84c6969b00f6ea3fa43587a0ad855529f601d6d0a17ecbc72996ba447"
     },
     ".github/workflows/cloudflare-source-trigger-ci.yml": {
       "bytes": 1238,
       "sha256": "aadffa5ac8afa7fe563341ddcde357df671e9eca1f3cd0f94370eb88cc7aaf45"
+    },
+    "ops/cloudflare-source-trigger/pagination.test.mjs": {
+      "bytes": 4808,
+      "sha256": "5d8d78fa27d04d6c941876445b07ae5e5265bcf94db464f16932b295c75c094d"
     }
   }
 }

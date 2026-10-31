@@ -11,6 +11,7 @@ GitHub'ın yerel `cron: '4 * * * *'` saati 2026-10-31 00:22 ve 06:37 UTC'de baş
 - Worker: `worker.mjs`, test edilebilir durum motoru `dispatch-core.mjs`, `wrangler.jsonc`.
 - `1 * * * *`: UTC saat başından bir dakika sonra çalış.
 - `SourceDispatchLock` SQLite Durable Object `INSERT OR IGNORE` ile **her saat yalnız bir kez** dispatch rezervasyonu yapar. Ağ hatası, belirsiz GitHub yanıtı ve diğer hatalarda rezervasyon korunur; otomatik tekrar yoktur. Manuel inceleme gerekir.
+- Son 100 repo çalışmasına bakıp kilitlenmek yerine hedef workflow ve `main` dalında, bu UTC saat için `created>=epoch` ve önceki aktif `queued/in_progress/waiting/requested/pending` durumları ayrı sorgulanır (`per_page=1`). Negatif kanıt için hem `total_count=0` hem boş liste zorunludur; pozitif sayım tetiklemeyi durdurur. Sayfalama veya tüm tarihçeyi indirme gerekmez. En fazla altı run sorgusu, bir receipt sorgusu ve bir dispatch isteği yapılır. Bu sorgularla GitHub native cron arasında atomik kilit yoktur; mevcut kaynak workflow kilitleri ayrıca korunur.
 - İşlem öncesinde aynı saat `receipts/YYYY/MM/DD/YYYYMMDDTHH00Z-n519.json.gz` ve public GitHub Actions run listesi okunur. Mevcut kaynak makbuzu, aynı saat run'ı, önceki aktif source işi veya API belirsizliği varsa **HOLD**.
 - Tetikleme sonrası `DISPATCH_ACCEPTED_NOT_SOURCE_PASS` yalnız GitHub isteğinin kabulü demektir; source PASS, özel P30, AL sinyali veya 7/24 başarı değildir.
 - UTC :01 cron gerçek çalışmaya 90 saniyeden fazla gecikirse aynı saate ait source dispatch **yasak**. Bu, tazelik kuralını korumak içindir.
