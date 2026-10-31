@@ -43,7 +43,8 @@ function system({ failFirstStage = false, failNetworkOnce = false, priorState = 
         const [state, key] = args;
         const row=rows.get(key);
         const expected=['SOURCE_RECEIPT_LOOKUP_UNAVAILABLE','GITHUB_RUNS_UNAVAILABLE',
-                        'GITHUB_RUNS_INDETERMINATE','GITHUB_RUN_TIME_INVALID'];
+                        'GITHUB_RUNS_INDETERMINATE','GITHUB_RUN_TIME_INVALID',
+                        'GITHUB_PRE_DISPATCH_NETWORK_ERROR'];
         if (!row || !expected.includes(row.state)) return { toArray: () => [] };
         row.state=state;
         return { toArray: () => [{ epoch:key }] };
