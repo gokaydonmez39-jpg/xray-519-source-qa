@@ -1,0 +1,58 @@
+name: XRAY 519 Main Offline Research Acceptance (No Market Calls)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'research_519.py'
+      - 'bridge_519.py'
+      - 'publish_git.py'
+      - 'freqtrade_causality_shadow.py'
+      - 'warmup_receipt_audit.py'
+      - 'tests/**'
+      - '.github/workflows/xray-519-main-offline-research.yml'
+  pull_request:
+    paths:
+      - 'tests/**'
+      - '.github/workflows/xray-519-main-offline-research.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xray-519-main-offline-research-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  independent-scientific-gate:
+    if: github.repository == 'gokaydonmez39-jpg/xray-519-source-qa' && github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Checkout public code without persisted credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Compile public source and receipt tests
+        run: |
+          set -euo pipefail
+          python3 -m compileall -q research_519.py bridge_519.py publish_git.py freqtrade_causality_shadow.py warmup_receipt_audit.py tests
+      - name: Normal and optimized fail-closed tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -q
+          python3 -O -m unittest discover -s tests -q
+      - name: Read-only contract proof
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import research_519 as r
+          assert set(r.ALLOWED_PATHS)=={
+              '/api/v3/time','/api/v3/exchangeInfo','/api/v3/ticker/24hr',
+              '/api/v3/ticker/bookTicker','/api/v3/klines'}
+          assert r.COUNTS == {'1h':100,'4h':40,'1d':40}
+          assert r.BRIDGE_COUNTS == {'1h':100,'4h':70,'1d':60}
+          print('MAIN_OFFLINE_RESEARCH_GATE_PASS_NO_MARKET_CALLS')
+          PY
