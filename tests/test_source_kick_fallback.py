@@ -19,7 +19,10 @@ class PublicSourceKickFallbackTests(unittest.TestCase):
         self.assertIn('if [ "$EVENT_NAME" = schedule ] || [ "$EVENT_NAME" = push ]; then',src)
         self.assertIn('MODE="$(python3 select_scope.py)"',src)
         self.assertIn('SOURCE_PREFLIGHT_ALLOW_SCAN',src)
-        self.assertIn('DUPLICATE_EPOCH_NO_SCAN',src)
+        self.assertIn('python3 -m ops.source_preflight',src)
+        helper=(Path(__file__).resolve().parents[1]/'ops/source_preflight.py').read_text()
+        self.assertIn('DUPLICATE_EPOCH_NO_SCAN',helper)
+        self.assertIn('SOURCE_ALREADY_PUBLISHED_AUTHENTIC_PAIR_NO_SCAN_NOT_NEW_SOURCE_PASS',helper)
         self.assertIn('Read-only Binance scan, immutable receipt and independent readback',src)
 
     def test_kick_cannot_create_automatic_trading(self):

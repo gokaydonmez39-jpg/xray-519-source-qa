@@ -62,17 +62,25 @@ jobs:
             case "$MODE_INPUT" in 250|400|519) MODE="$MODE_INPUT" ;; *) exit 2 ;; esac
           fi
           # BEGIN_SOURCE_PREFLIGHT
+          # A delayed native schedule can start after a distinct public source
+          # run already published this hour. Authenticate the exact immutable
+          # remote 519 receipt+bridge before calling that redundant work a NOOP.
+          # A NOOP is never a new source PASS or private AL authorization.
           git fetch origin "${GITHUB_REF_NAME}"
-          if [ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/${GITHUB_REF_NAME}")" ]; then
-            printf 'FAIL_CLOSED STALE_WORKFLOW_HEAD_NO_SCAN\n'
-            exit 2
-          fi
-          CANDIDATE="receipts/$(date -u +%Y/%m/%d/%Y%m%dT%H00Z)-n${MODE}.json.gz"
-          if [ -e "$CANDIDATE" ] || [ -L "$CANDIDATE" ]; then
-            printf 'FAIL_CLOSED DUPLICATE_EPOCH_NO_SCAN\n'
-            exit 2
-          fi
-          printf 'SOURCE_PREFLIGHT_ALLOW_SCAN\n'
+          STAMP="$(date -u +%Y%m%dT%H00Z)"
+          PREFLIGHT_EXIT=0
+          python3 -m ops.source_preflight --mode "$MODE" --stamp "$STAMP" || PREFLIGHT_EXIT=$?
+          case "$PREFLIGHT_EXIT" in
+            0) printf 'SOURCE_PREFLIGHT_ALLOW_SCAN_CONFIRMED\n' ;;
+            20)
+              printf 'SOURCE_ALREADY_PUBLISHED_NO_SCAN_NOT_NEW_SOURCE_PASS\n'
+              exit 0
+              ;;
+            *)
+              printf 'FAIL_CLOSED SOURCE_PREFLIGHT_BLOCKED\n'
+              exit 2
+              ;;
+          esac
           # END_SOURCE_PREFLIGHT
           SCAN_BASE="$(git rev-parse HEAD)"
           OUT="$RUNNER_TEMP/source-receipt.json"

@@ -1,5 +1,6 @@
 """Execute the deployed workflow's exact guard against isolated real git repos."""
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -22,10 +23,18 @@ class WorkflowPreflightTests(unittest.TestCase):
         text = (Path(__file__).resolve().parents[1]/'.github/workflows/hourly-519-public-source.yml').read_text()
         section = text.split('# BEGIN_SOURCE_PREFLIGHT\n', 1)[1].split('# END_SOURCE_PREFLIGHT', 1)[0]
         self.script = 'set -euo pipefail\n' + '\n'.join(line[10:] if line.startswith('          ') else line for line in section.splitlines())
+        # Execute the real helper copied into the isolated repo; no network or
+        # reliance on the test runner's project checkout.
+        source_root = Path(__file__).resolve().parents[1]
+        (self.work/'ops').mkdir(exist_ok=True)
+        shutil.copyfile(source_root/'ops/source_preflight.py',
+                        self.work/'ops/source_preflight.py')
+        shutil.copyfile(source_root/'warmup_receipt_audit.py',
+                        self.work/'warmup_receipt_audit.py')
         self.bin = self.root/'bin'
         self.bin.mkdir()
         date = self.bin/'date'
-        date.write_text('#!/bin/sh\nprintf "2026/10/30/20261030T1800Z\\n"\n')
+        date.write_text('#!/bin/sh\nprintf "20261030T1800Z\\n"\n')
         date.chmod(0o755)
 
     @staticmethod
@@ -57,7 +66,7 @@ class WorkflowPreflightTests(unittest.TestCase):
         self.run_git(self.work, 'reset', '--hard', 'HEAD~1')
         result = self.guard()
         self.assertEqual(result.returncode, 2)
-        self.assertIn('STALE_WORKFLOW_HEAD_NO_SCAN', result.stdout)
+        self.assertIn('STALE_HEAD_WITHOUT_VALID_EPOCH', result.stdout)
         self.assertNotIn('SOURCE_PREFLIGHT_ALLOW_SCAN', result.stdout)
 
 
