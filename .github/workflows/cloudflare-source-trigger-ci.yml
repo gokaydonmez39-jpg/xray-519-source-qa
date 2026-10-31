@@ -1,0 +1,34 @@
+name: XRAY 519 Cloudflare source trigger offline QA
+on:
+  push:
+    branches: [feature-519-cloudflare-source-trigger-20261031]
+    paths:
+      - 'ops/cloudflare-source-trigger/**'
+      - '.github/workflows/cloudflare-source-trigger-ci.yml'
+  pull_request:
+    paths:
+      - 'ops/cloudflare-source-trigger/**'
+      - '.github/workflows/cloudflare-source-trigger-ci.yml'
+permissions:
+  contents: read
+jobs:
+  trigger-only-offline-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Checkout public-only source repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Run Node deterministic and negative tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          node --check ops/cloudflare-source-trigger/dispatch-core.mjs
+          node --check ops/cloudflare-source-trigger/worker.mjs
+          node --test ops/cloudflare-source-trigger/*.test.mjs
+      - name: Audit no external deployment
+        run: |
+          set -euo pipefail
+          test ! -e .dev.vars
+          test ! -e ops/cloudflare-source-trigger/.dev.vars
+          echo 'OFFLINE_ONLY_PASS no Cloudflare deploy, no GitHub dispatch, no private actions'
