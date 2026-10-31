@@ -58,7 +58,7 @@ for(const query of ['epoch',...statuses])test('API error for '+query+' blocks an
   assert.equal((await t.run()).decision,'DUPLICATE_EPOCH_LOCKED');assert.equal(posts(t).length,0);
 });
 test('network failure never dispatches',async()=>{
-  const t=harness({bad:{query:'pending',throw:true}});assert.equal((await t.run()).decision,'GITHUB_NETWORK_OR_RESPONSE_UNKNOWN');assert.equal(posts(t).length,0);
+  const t=harness({bad:{query:'pending',throw:true}});assert.equal((await t.run()).decision,'GITHUB_PRE_DISPATCH_NETWORK_ERROR');assert.equal(posts(t).length,0);
 });
 test('invalid run time blocks',async()=>{
   const t=harness();const x=harness({sameHour:[{...t.sample,created_at:'invalid'}]});

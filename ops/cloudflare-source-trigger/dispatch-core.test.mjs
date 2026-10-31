@@ -103,3 +103,21 @@ test('HTTP 3xx is fail-closed at all GitHub stages', async () => {
     assert.equal(t.calls.length, count, 'redirect failures must not be retried');
   }
 });
+
+test('GET receipt network error is known pre-dispatch and must not poison whole epoch',async()=>{
+  const t=mock({throwOn:'/contents/'});
+  assert.equal((await t.run()).decision,'GITHUB_PRE_DISPATCH_NETWORK_ERROR');
+  assert.equal(t.calls.filter(c=>c.method==='POST').length,0);
+  assert.equal(t.status.get('2026-10-31T08:00:00Z'),'GITHUB_PRE_DISPATCH_NETWORK_ERROR');
+});
+test('GET source-run list network failure stays pre-POST; no API dispatch attempted',async()=>{
+  const t=mock({throwOn:'/runs?'});
+  assert.equal((await t.run()).decision,'GITHUB_PRE_DISPATCH_NETWORK_ERROR');
+  assert.equal(t.calls.filter(c=>c.method==='POST').length,0);
+});
+test('POST dispatch network failure remains ambiguous and can NEVER be retried',async()=>{
+  const t=mock({throwOn:'/dispatches'});
+  assert.equal((await t.run()).decision,'GITHUB_NETWORK_OR_RESPONSE_UNKNOWN');
+  assert.equal((await t.run()).decision,'DUPLICATE_EPOCH_LOCKED');
+  assert.equal(t.calls.filter(c=>c.method==='POST').length,1);
+});

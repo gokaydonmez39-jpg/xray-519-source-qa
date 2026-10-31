@@ -41,12 +41,13 @@ export class SourceDispatchLock extends DurableObject {
         // RESERVED, and any previous BACKUP_* state are NEVER retried.
         // Atomic UPDATE ... RETURNING is a single-winner compare-and-swap.
         const retry = sql.exec(
-          'UPDATE dispatch_epoch SET state=? WHERE epoch=? AND state IN (?,?,?,?) RETURNING epoch',
+          'UPDATE dispatch_epoch SET state=? WHERE epoch=? AND state IN (?,?,?,?,?) RETURNING epoch',
           'BACKUP_RESERVED_PREPOST', epoch,
           'SOURCE_RECEIPT_LOOKUP_UNAVAILABLE',
           'GITHUB_RUNS_UNAVAILABLE',
           'GITHUB_RUNS_INDETERMINATE',
           'GITHUB_RUN_TIME_INVALID',
+          'GITHUB_PRE_DISPATCH_NETWORK_ERROR',
         ).toArray();
         return retry.length === 1 && retry[0].epoch === epoch;
       },
@@ -65,6 +66,7 @@ export class SourceDispatchLock extends DurableObject {
       'SOURCE_RUN_ALREADY_ACTIVE', 'SOURCE_RECEIPT_LOOKUP_UNAVAILABLE',
       'GITHUB_RUNS_UNAVAILABLE', 'GITHUB_RUNS_INDETERMINATE',
       'GITHUB_RUN_TIME_INVALID', 'DISPATCH_REJECTED',
+      'GITHUB_PRE_DISPATCH_NETWORK_ERROR',
       'GITHUB_NETWORK_OR_RESPONSE_UNKNOWN', 'POST_RESERVATION_AUDIT_FAILURE',
     ];
     const safeStates = new Set([
@@ -158,6 +160,7 @@ export default {
       'POST_RESERVATION_AUDIT_FAILURE', 'SOURCE_RECEIPT_LOOKUP_UNAVAILABLE',
       'GITHUB_RUNS_UNAVAILABLE', 'GITHUB_RUNS_INDETERMINATE',
       'GITHUB_RUN_TIME_INVALID', 'DISPATCH_REJECTED',
+      'GITHUB_PRE_DISPATCH_NETWORK_ERROR',
       'GITHUB_NETWORK_OR_RESPONSE_UNKNOWN',
     ]);
     const decision = result && result.decision;
