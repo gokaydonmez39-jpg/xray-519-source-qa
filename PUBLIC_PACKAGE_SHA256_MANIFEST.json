@@ -96,8 +96,8 @@
       "sha256": "50f119d3ff04f9d58e4d3fe3d473facdf8127933615a356654fead01137d6432"
     },
     "ops/cloudflare-source-trigger/worker.mjs": {
-      "bytes": 5833,
-      "sha256": "ff88edf5559f3f1fcce164b8f5c0c3ba68480c49a85aac83a62cee4e0e691cf1"
+      "bytes": 6235,
+      "sha256": "47a4ce8895312713cd8cd07c05a91b241fd42817f0ededfb022e8a52ced78fed"
     },
     "ops/cloudflare-source-trigger/wrangler.jsonc": {
       "bytes": 582,
@@ -108,8 +108,8 @@
       "sha256": "013cbc442b63a08422e2495333ccf92750ebef0174cc6864c3aeaceb29360b01"
     },
     "ops/cloudflare-source-trigger/worker.test.mjs": {
-      "bytes": 8906,
-      "sha256": "31c791ded17277ae6eebbf30966058746e0e20978afffb03f583faaece8f2a10"
+      "bytes": 13140,
+      "sha256": "e368e6deae36859ddf341f9b0988e4ee7faa18b50457985b92ee0b9b5a81a3c4"
     },
     "ops/cloudflare-source-trigger/README_TR.md": {
       "bytes": 5926,
