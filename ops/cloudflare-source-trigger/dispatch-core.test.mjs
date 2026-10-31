@@ -1,0 +1,44 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { CONFIG, epochOf, executeOnce } from './dispatch-core.mjs';
+
+const hour=Date.parse('2026-10-31T08:00:00.000Z'),scheduledTime=hour+60_000,nowMs=hour+70_000;
+function mock({receipt=404,runs=[],listStatus=200,dispatchStatus=200,throwOn='' }={}){
+  const locks=new Set(),calls=[],status=new Map();
+  const githubFetch=async(url,opts)=>{
+    calls.push({url,method:opts.method,headers:opts.headers,body:opts.body});
+    if(throwOn&&url.includes(throwOn))throw Error('network');
+    if(url.includes('/contents/'))return {status:receipt};
+    if(url.includes('/actions/runs?'))return {status:listStatus,json:async()=>({workflow_runs:runs})};
+    if(url.includes('/dispatches'))return {status:dispatchStatus,json:async()=>({workflow_run_id:789})};
+    throw Error('unexpected');
+  };
+  const arg={scheduledTime,nowMs,token:'TEST_FAKE_TOKEN_0123456789_ABC',githubFetch,
+    reserve:(key)=>{if(locks.has(key))return false;locks.add(key);return true;},
+    mark:async(key,value)=>{status.set(key,value)}};
+  return{arg,calls,status,run:()=>executeOnce(arg)};
+}
+test('UTC :01 and last-close deterministic epoch',()=>{
+  assert.deepEqual(epochOf(scheduledTime,nowMs),{ok:true,epoch:'2026-10-31T08:00:00Z',stamp:'20261031T0800Z',dir:'2026/10/31',startMs:hour});
+  assert.equal(epochOf(scheduledTime,scheduledTime+90_001).code,'STALE_OR_EARLY_CRON');
+  assert.equal(epochOf(scheduledTime+60_000,nowMs).code,'INVALID_SCHEDULE');
+});
+test('exactly one public Github workflow dispatch',async()=>{
+  const t=mock();const x=await t.run(),y=await t.run();
+  assert.equal(x.decision,'DISPATCH_ACCEPTED_NOT_SOURCE_PASS');
+  assert.equal(y.decision,'DUPLICATE_EPOCH_LOCKED');
+  const post=t.calls.filter(x=>x.method==='POST');assert.equal(post.length,1);
+  assert.equal(post[0].url,'https://api.github.com/repos/'+CONFIG.repository+'/actions/workflows/hourly-519-public-source.yml/dispatches');
+  assert.deepEqual(JSON.parse(post[0].body),{ref:'main',inputs:{max_markets:'519'}});
+  assert.ok(!JSON.stringify(t.calls).includes('xray-crypto-godzilla-omega'));
+});
+test('existing receipt skips',async()=>{const t=mock({receipt:200});assert.equal((await t.run()).decision,'EXISTING_SOURCE_RECEIPT');assert.equal(t.calls.filter(x=>x.method==='POST').length,0)});
+test('existing workflow run same hour skips',async()=>{const t=mock({runs:[{workflow_id:CONFIG.workflowId,head_branch:'main',created_at:new Date(hour).toISOString(),status:'completed',id:32}]});assert.equal((await t.run()).decision,'EXISTING_SOURCE_RUN')});
+test('prior active run skips',async()=>{const t=mock({runs:[{workflow_id:CONFIG.workflowId,head_branch:'main',created_at:new Date(hour-3_600_000).toISOString(),status:'in_progress',id:33}]});assert.equal((await t.run()).decision,'SOURCE_RUN_ALREADY_ACTIVE')});
+test('missing token never accesses Github',async()=>{const t=mock();t.arg.token='';assert.equal((await t.run()).decision,'SECRET_NOT_CONFIGURED');assert.equal(t.calls.length,0)});
+test('receipt API error and run API error both block',async()=>{const a=mock({receipt:403});assert.equal((await a.run()).decision,'SOURCE_RECEIPT_LOOKUP_UNAVAILABLE');const b=mock({listStatus:429});assert.equal((await b.run()).decision,'GITHUB_RUNS_UNAVAILABLE')});
+test('dispatch API error is locked, not retried',async()=>{const t=mock({dispatchStatus:403});assert.equal((await t.run()).decision,'DISPATCH_REJECTED');assert.equal((await t.run()).decision,'DUPLICATE_EPOCH_LOCKED')});
+test('network uncertainty is fail-closed',async()=>{const t=mock({throwOn:'/dispatches'});assert.equal((await t.run()).decision,'GITHUB_NETWORK_OR_RESPONSE_UNKNOWN');assert.equal((await t.run()).decision,'DUPLICATE_EPOCH_LOCKED')});
+test('204 without run id is NOT a source success claim',async()=>{const t=mock({dispatchStatus:204});assert.equal((await t.run()).decision,'DISPATCH_ACCEPTED_NOT_SOURCE_PASS')});
+test('concurrent requests reserve same key once',async()=>{const t=mock();const r=await Promise.all([t.run(),t.run()]);assert.equal(r.filter(x=>x.decision==='DISPATCH_ACCEPTED_NOT_SOURCE_PASS').length,1)});
+test('GitHub list of 100 creates pagination ambiguity block',async()=>{const t=mock({runs:Array.from({length:100},(_,i)=>({id:i}))});assert.equal((await t.run()).decision,'GITHUB_RUNS_INDETERMINATE')});
