@@ -35,3 +35,22 @@ without its verified code and market data in an approved private environment.
 ## Rollback
 Close PR and delete isolated branch. No `main` or scheduled source job
 has to change; source-only workflow was not edited.
+
+
+## Independent diagnosis of the 30 WARMUP sources (pinned public receipts)
+`warmup_receipt_audit.py` reads only already-committed public compressed
+source receipts, rejecting duplicate JSON keys, gzip bombs, symlinks,
+mismatched row/header accounting, duplicate market IDs, misleading PASS with
+WARMUP/FAIL frame flags, and any nonzero order/private-strategy metadata.
+It exposes only counts and per-frame/reason aggregates, never symbols.
+`tests/test_warmup_receipt_audit.py` reads the immutable 2026-10-31 00:00
+and 06:00 UTC 519 receipts during offline CI; emitted log records start
+`PUBLIC_519_WARMUP_REASON_READBACK=`. This is an audit of an existing
+public artifact, **not** a new provider scan, model outcome, notification,
+or WARMUP remediation. The fixed historical receipts are not evidence of
+the next scheduled epoch or the revised publisher's live success.
+
+Run locally without any network:
+```
+python3 warmup_receipt_audit.py --receipt receipts/2026/10/31/20261031T0600Z-n519.json.gz
+```
