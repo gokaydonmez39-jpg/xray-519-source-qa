@@ -1,0 +1,11 @@
+{
+  "schema": "XRAY_PUBLIC_519_SOURCE_KICK_V1",
+  "utc_closed_epoch": "2026-10-31T18:00:00Z",
+  "request_kind": "ONE_SHOT_PUBLIC_ONLY_RECOVERY",
+  "reason": "NO_CLOUDFLARE_DISPATCH_OR_NATIVE_SCHEDULE_RUN_VISIBLE_BY_20261031T1806Z",
+  "no_private_actions": true,
+  "no_orders": true,
+  "source_workflow": ".github/workflows/hourly-519-public-source.yml",
+  "requested_by": "CHATGPT_USER_APPROVED_FINAL_RECOVERY",
+  "does_not_claim_private_start": true
+}
