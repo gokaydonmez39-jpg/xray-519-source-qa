@@ -104,3 +104,83 @@ test('wrong Cron expression is refused before any Durable Object invocation', as
   assert.equal(h.snapshot().invoked, 0);
   assert.equal(h.snapshot().noRetry, 1);
 });
+
+
+function auditHarness({ decision = 'DUPLICATE_EPOCH_LOCKED', rows = {}, throwRead = false } = {}) {
+  const logs = [], sqlCalls = [];
+  const src = fs.readFileSync(new URL('./worker.mjs', import.meta.url), 'utf8')
+    .replace("import { DurableObject } from 'cloudflare:workers';",
+      'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }')
+    .replace("import { executeOnce } from './dispatch-core.mjs';",
+      'const executeOnce = async () => ({decision: "' + decision + '", stamp: "20261031T1400Z"});')
+    .replace('export class SourceDispatchLock', 'class SourceDispatchLock')
+    .replace('export default {', 'const workerEntry = {');
+  const ctx = {
+    Response, Request, URL,
+    console: { log: s => logs.push(JSON.parse(s)), error: () => {} },
+  };
+  vm.runInNewContext(src + '\n' + 'globalThis.lockObject = SourceDispatchLock;', ctx);
+  const storage = {
+    sql: {exec: (query, ...args) => {
+      sqlCalls.push({ query, args });
+      if (query.startsWith('CREATE TABLE')) return { rowsWritten: 0 };
+      if (!query.startsWith('SELECT state, reserved_at FROM dispatch_epoch')) {
+        throw Error('Unexpected SQL in read-only audit test');
+      }
+      if (throwRead) throw Error('SQLite unavailable');
+      return { toArray: () => rows[args[0]] ? [rows[args[0]]] : [] };
+    }},
+  };
+  const d = new ctx.lockObject({storage}, { GITHUB_ACTIONS_DISPATCH_TOKEN: 'TEST_NOT_REAL_SECRET_1234567890' });
+  const request = new Request('https://internal/trigger', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({scheduledTime:Date.parse('2026-10-31T14:01:46.844Z')}),
+  });
+  return {run:() => d.fetch(request), logs, sqlCalls};
+}
+
+test('duplicate audit identifies prior and current reservation without mutation or retry', async () => {
+  const h = auditHarness({rows:{
+    '2026-10-31T13:00:00Z': {state:'DISPATCH_REJECTED',reserved_at:Date.parse('2026-10-31T13:01:46Z')},
+    '2026-10-31T14:00:00Z': {state:'RESERVED',reserved_at:Date.parse('2026-10-31T14:01:45Z')},
+  }});
+  const response=await h.run();
+  assert.equal(response.status,200);
+  assert.equal((await response.json()).decision,'DUPLICATE_EPOCH_LOCKED');
+  assert.equal(h.logs[0].previousEpoch,'2026-10-31T13:00:00Z');
+  assert.equal(h.logs[0].previousLock.state,'DISPATCH_REJECTED');
+  assert.equal(h.logs[0].duplicateLock.state,'RESERVED');
+  assert.equal(h.sqlCalls.filter(c => c.query.startsWith('SELECT')).length,2);
+  assert.equal(h.sqlCalls.filter(c => /UPDATE|DELETE|INSERT/.test(c.query)).length,0);
+  assert.ok(!JSON.stringify(h.logs).includes('TEST_NOT_REAL_SECRET'));
+});
+
+test('unknown state is sanitized rather than echoed to Cloudflare log', async () => {
+  const h = auditHarness({rows:{
+    '2026-10-31T14:00:00Z': {state:'FAKE_PRIVATE_SECRET_DO_NOT_LOG',reserved_at:Date.parse('2026-10-31T14:01:45Z')},
+  }});
+  await h.run();
+  assert.equal(h.logs[0].duplicateLock.state,'UNKNOWN_STATE');
+  assert.ok(!JSON.stringify(h.logs).includes('FAKE_PRIVATE_SECRET'));
+  assert.equal(h.logs[0].previousLock.state,'ABSENT');
+});
+
+test('unavailable diagnostic SELECT never bypasses or releases source epoch lock', async () => {
+  const h=auditHarness({throwRead:true});
+  const response=await h.run();
+  assert.equal((await response.json()).decision,'DUPLICATE_EPOCH_LOCKED');
+  assert.equal(h.logs[0].previousLock.state,'READBACK_UNAVAILABLE');
+  assert.equal(h.logs[0].duplicateLock.state,'READBACK_UNAVAILABLE');
+  assert.equal(h.sqlCalls.filter(c => /UPDATE|DELETE|INSERT/.test(c.query)).length,0);
+});
+
+test('nonduplicate logs previous epoch only without exposing current lock', async () => {
+  const h=auditHarness({decision:'DISPATCH_ACCEPTED_NOT_SOURCE_PASS',rows:{
+    '2026-10-31T13:00:00Z': {state:'EXISTING_SOURCE_RUN',reserved_at:Date.parse('2026-10-31T13:01:45Z')},
+  }});
+  const response=await h.run();
+  assert.equal((await response.json()).decision,'DISPATCH_ACCEPTED_NOT_SOURCE_PASS');
+  assert.equal(h.logs[0].previousLock.state,'EXISTING_SOURCE_RUN');
+  assert.equal(h.logs[0].duplicateLock,undefined);
+  assert.equal(h.sqlCalls.filter(c => c.query.startsWith('SELECT')).length,1);
+});
