@@ -17,34 +17,59 @@ export class SourceDispatchLock extends DurableObject {
     try { message = await request.json(); }
     catch { return Response.json({ decision: 'MALFORMED_REQUEST' }, { status: 400 }); }
     const sql = this.ctx.storage.sql;
+    // Backup reservations never reset the original SQLite epoch or its
+    // reserved_at value. A second chance is allowed ONLY after a recorded
+    // pre-dispatch lookup failure, through atomic compare-and-swap.
+    let backupInvocation = false;
     const result = await executeOnce({
       scheduledTime: message?.scheduledTime,
       nowMs: Date.now(),
       token: this.env.GITHUB_ACTIONS_DISPATCH_TOKEN,
-      reserve: (epoch, nowMs) => {
-        // SqlStorageCursor.rowsWritten may not be final before cursor consumption.
-        // Atomically return the inserted key; only a newly created epoch may dispatch.
-        // Historical RESERVED rows stay locked: no DELETE, reset or retry.
+      reserve: (epoch, nowMs, isBackup) => {
+        backupInvocation = isBackup === true;
+        // Initial reservation remains immutable for audit. Lazy rowsWritten
+        // is NOT an insertion signal; only RETURNING proves a new row.
         const inserted = sql.exec(
           'INSERT INTO dispatch_epoch(epoch,reserved_at,state) VALUES(?,?,?) ' +
           'ON CONFLICT(epoch) DO NOTHING RETURNING epoch',
-          epoch, nowMs, 'RESERVED',
+          epoch, nowMs, backupInvocation ? 'BACKUP_RESERVED_PREPOST' : 'RESERVED',
         ).toArray();
-        return inserted.length === 1 && inserted[0].epoch === epoch;
+        if (inserted.length === 1 && inserted[0].epoch === epoch) return true;
+        if (!backupInvocation) return false;
+        // The ONLY retryable original states are known to occur before POST.
+        // Ambiguous network, an accepted dispatch, a rejection after POST,
+        // RESERVED, and any previous BACKUP_* state are NEVER retried.
+        // Atomic UPDATE ... RETURNING is a single-winner compare-and-swap.
+        const retry = sql.exec(
+          'UPDATE dispatch_epoch SET state=? WHERE epoch=? AND state IN (?,?,?,?) RETURNING epoch',
+          'BACKUP_RESERVED_PREPOST', epoch,
+          'SOURCE_RECEIPT_LOOKUP_UNAVAILABLE',
+          'GITHUB_RUNS_UNAVAILABLE',
+          'GITHUB_RUNS_INDETERMINATE',
+          'GITHUB_RUN_TIME_INVALID',
+        ).toArray();
+        return retry.length === 1 && retry[0].epoch === epoch;
       },
-      mark: async (epoch, state) => { sql.exec('UPDATE dispatch_epoch SET state=? WHERE epoch=?', state, epoch); },
+      mark: async (epoch, state) => {
+        const persisted = backupInvocation ? 'BACKUP_' + state : state;
+        sql.exec('UPDATE dispatch_epoch SET state=? WHERE epoch=?', persisted, epoch);
+      },
       githubFetch: (url, options) => fetch(url, { ...options, redirect: 'manual', signal: AbortSignal.timeout(6000) }),
     });
     // Read-only SQLite diagnostics: a duplicate lock does not prove that a
     // GitHub dispatch happened. Inspect previous/current reservation state
     // without releasing, retrying, or editing the single-dispatch lock.
-    const safeStates = new Set([
+    const knownStates = [
       'RESERVED', 'DISPATCH_ACCEPTED_NOT_SOURCE_PASS',
       'EXISTING_SOURCE_RECEIPT', 'EXISTING_SOURCE_RUN',
       'SOURCE_RUN_ALREADY_ACTIVE', 'SOURCE_RECEIPT_LOOKUP_UNAVAILABLE',
       'GITHUB_RUNS_UNAVAILABLE', 'GITHUB_RUNS_INDETERMINATE',
       'GITHUB_RUN_TIME_INVALID', 'DISPATCH_REJECTED',
       'GITHUB_NETWORK_OR_RESPONSE_UNKNOWN', 'POST_RESERVATION_AUDIT_FAILURE',
+    ];
+    const safeStates = new Set([
+      ...knownStates, ...knownStates.map(state => 'BACKUP_' + state),
+      'BACKUP_RESERVED_PREPOST',
     ]);
     function readLock(epoch) {
       try {
@@ -83,10 +108,18 @@ export default {
   async scheduled(controller, env, ctx) {
     // Fail closed and expose dispatch failures as Cron errors, never false "ok".
     // noRetry prevents Cloudflare retries after an ambiguous GitHub response.
-    if (controller.cron !== '1 * * * *') {
+    if (controller.cron !== '1 * * * *' && controller.cron !== '6 * * * *') {
       controller.noRetry();
       console.error('XRAY_PUBLIC_DISPATCH_WRONG_CRON');
       throw new Error('XRAY_PUBLIC_DISPATCH_WRONG_CRON');
+    }
+    // Reject a mistaken schedule-to-minute pairing before touching SQLite.
+    const expectedMinute = controller.cron === '1 * * * *' ? 1 : 6;
+    if (!Number.isSafeInteger(controller.scheduledTime) ||
+        new Date(controller.scheduledTime).getUTCMinutes() !== expectedMinute) {
+      controller.noRetry();
+      console.error('XRAY_PUBLIC_DISPATCH_CRON_MINUTE_MISMATCH');
+      throw new Error('XRAY_PUBLIC_DISPATCH_CRON_MINUTE_MISMATCH');
     }
     let response;
     try {

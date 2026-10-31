@@ -4,7 +4,7 @@
   "compatibility_date": "2026-10-20",
   "workers_dev": false,
   "triggers": {
-    "crons": ["1 * * * *"]
+    "crons": ["1 * * * *", "6 * * * *"]
   },
   "durable_objects": {
     "bindings": [

@@ -4,7 +4,8 @@ export const CONFIG = Object.freeze({
   workflowId: 402070622,
   workflowFile: 'hourly-519-public-source.yml',
   scope: '519',
-  offsetMs: 60_000, // Cloudflare cron: UTC minute 01; prior 1H candle has closed.
+  offsetMs: 60_000, // primary UTC :01
+  backupOffsetMs: 360_000, // secondary :06, same closed 1H source epoch
   maxDelayMs: 90_000, // Never dispatch a stale source epoch.
   maxFutureMs: 5_000,
   hourMs: 3_600_000,
@@ -15,17 +16,17 @@ export function epochOf(scheduledTime, nowMs) {
   if (!Number.isSafeInteger(scheduledTime) || !Number.isSafeInteger(nowMs) || scheduledTime < 0) {
     return { ok: false, code: 'INVALID_SCHEDULE' };
   }
-  // Cloudflare's scheduledTime is milliseconds but may be :01:SS.mmm rather than
-  // the exact nominal :01:00.000. Never accept a different UTC cron minute.
+  // Both Cron triggers represent the SAME closed hourly source epoch. The
+  // scheduledTime may include seconds; never accept an adjacent minute.
   const hour = Math.floor(scheduledTime / CONFIG.hourMs) * CONFIG.hourMs;
   const scheduledOffset = scheduledTime - hour;
-  if (scheduledOffset < CONFIG.offsetMs || scheduledOffset >= CONFIG.offsetMs + 60_000) {
-    return { ok: false, code: 'INVALID_SCHEDULE' };
-  }
-  // Bound freshness from NOMINAL :01, not the delayed Cloudflare event time.
-  // This prevents a late :01:59.999 event from extending the 90-second window.
+  const offset = [CONFIG.offsetMs, CONFIG.backupOffsetMs].find(v =>
+    scheduledOffset >= v && scheduledOffset < v + 60_000);
+  if (offset === undefined) return { ok: false, code: 'INVALID_SCHEDULE' };
+  // Bound time against the NOMINAL start of the matching trigger (not the
+  // delayed event's seconds), preserving the original 90-second guard.
   const delay = nowMs - scheduledTime;
-  const sinceNominalCron = nowMs - (hour + CONFIG.offsetMs);
+  const sinceNominalCron = nowMs - (hour + offset);
   if (delay < -CONFIG.maxFutureMs || sinceNominalCron > CONFIG.maxDelayMs ||
       Math.floor(nowMs / CONFIG.hourMs) !== Math.floor(scheduledTime / CONFIG.hourMs)) {
     return { ok: false, code: 'STALE_OR_EARLY_CRON' };
@@ -63,7 +64,8 @@ export async function executeOnce({ scheduledTime, nowMs, token, reserve, mark, 
     return out('BAD_ADAPTER', time.stamp);
   }
   let locked;
-  try { locked = reserve(time.epoch, nowMs); }
+  const isBackup = scheduledTime - time.startMs >= CONFIG.backupOffsetMs;
+  try { locked = reserve(time.epoch, nowMs, isBackup); }
   catch { return out('LOCK_STORAGE_FAILURE', time.stamp); }
   if (!locked) return out('DUPLICATE_EPOCH_LOCKED', time.stamp);
 
