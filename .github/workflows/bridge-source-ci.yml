@@ -1,5 +1,11 @@
 name: XRAY 519 bridge source-only CI
 on:
+  pull_request:
+    paths:
+      - "*.py"
+      - "tests/**"
+      - ".github/workflows/**"
+      - "PUBLIC_PACKAGE_SHA256_MANIFEST.json"
   push:
     branches: [feature-private-input-bridge-20261030, xray-p30-public-schedule-recovery-20261031]
   workflow_dispatch:

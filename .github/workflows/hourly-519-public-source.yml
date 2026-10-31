@@ -74,6 +74,7 @@ jobs:
           fi
           printf 'SOURCE_PREFLIGHT_ALLOW_SCAN\n'
           # END_SOURCE_PREFLIGHT
+          SCAN_BASE="$(git rev-parse HEAD)"
           OUT="$RUNNER_TEMP/source-receipt.json"
           BRIDGE="$RUNNER_TEMP/private-eligible-source.json.gz"
           if [ "$MODE" = 519 ]; then
@@ -99,14 +100,9 @@ jobs:
             git add -- "$FILE"
           fi
           git commit -m "research: append immutable $MODE closed-bar receipt [skip ci]"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
-          git fetch origin "${GITHUB_REF_NAME}"
-          ACTUAL="$(git show "origin/${GITHUB_REF_NAME}:${FILE}" | sha256sum | cut -d' ' -f1)"
-          test "$ACTUAL" = "$EXPECTED"
           if [ "$MODE" = 519 ]; then
-            BACTUAL="$(git show "origin/${GITHUB_REF_NAME}:$BFILE" | sha256sum | cut -d' ' -f1)"
-            test "$BACTUAL" = "$BEXPECTED"
-            printf 'BRIDGE_REMOTE_READBACK_PASS path=%s sha256=%s mode=%s\n' "$BFILE" "$BACTUAL" "$MODE"
+            python3 publish_git.py --base "$SCAN_BASE" --branch "$GITHUB_REF_NAME" "$FILE" "$BFILE"
+          else
+            python3 publish_git.py --base "$SCAN_BASE" --branch "$GITHUB_REF_NAME" "$FILE"
           fi
-          printf 'RECEIPT_REMOTE_READBACK_PASS path=%s sha256=%s mode=%s\n' "$FILE" "$ACTUAL" "$MODE"
           python3 verify_remote_pair.py
