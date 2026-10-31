@@ -116,7 +116,7 @@ function auditHarness({ decision = 'DUPLICATE_EPOCH_LOCKED', rows = {}, throwRea
     .replace('export class SourceDispatchLock', 'class SourceDispatchLock')
     .replace('export default {', 'const workerEntry = {');
   const ctx = {
-    Response, Request,
+    Response, Request, URL,
     console: { log: s => logs.push(JSON.parse(s)), error: () => {} },
   };
   vm.runInNewContext(src + '\n' + 'globalThis.lockObject = SourceDispatchLock;', ctx);
