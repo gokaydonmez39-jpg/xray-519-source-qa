@@ -14,7 +14,7 @@ Cloudflare cron UTC kullanır; dağıtım propagasyonu 15 dakika sürebilir. Cro
 - Tek SourceDispatchLock / xray-519-singleton, mevcut dispatch_epoch tablosu ve özgün reserved_at korunur. Satır DELETE/lock reset yok.
 - Sadece SOURCE_RECEIPT_LOOKUP_UNAVAILABLE, GITHUB_RUNS_UNAVAILABLE, GITHUB_RUNS_INDETERMINATE, GITHUB_RUN_TIME_INVALID ilk-attempt durumlarında backup CAS izni var; bunların hepsi GitHub dispatch POST'undan ÖNCE oluşur.
 - Backup sahibi BACKUP_RESERVED_PREPOST ile işaretlenir. Sonraki durum BACKUP_ ile öneklenir; hiçbir BACKUP_ durumu üçüncü denemeye hak vermez.
-- RESERVED, DISPATCH_REJECTED, GITHUB_NETWORK_OR_RESPONSE_UNKNOWN, POST_RESERVATION_AUDIT_FAILURE, DISPACH_ACCEPTED_NOT_SOURCE_PASS veya başka belirsiz/POST-sonrası durumda backup dispatch YASAK.
+- RESERVED, DISPATCH_REJECTED, GITHUB_NETWORK_OR_RESPONSE_UNKNOWN, POST_RESERVATION_AUDIT_FAILURE, DISPATCH_ACCEPTED_NOT_SOURCE_PASS veya başka belirsiz/POST-sonrası durumda backup dispatch YASAK.
 - Github'da aynı UTC dönemin mevcut source run'ı veya receipt varsa her fırsat yeniden dispatch yapmadan durur.
 
 ## Ölçülebilir canlı kabul
