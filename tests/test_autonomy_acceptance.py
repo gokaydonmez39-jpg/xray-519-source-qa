@@ -21,7 +21,7 @@ def source(hour, run_id):
     return {
         "kind": "SOURCE", "stamp": stamp(hour), "run_id": run_id,
         "receipt_runner_id": str(run_id),
-        "event": "workflow_dispatch", "trigger_provenance": "cloudflare_backup",
+        "event": "workflow_dispatch", "trigger_provenance": "cloudflare_cron_trace_exact_run",
         "trigger_independently_verified": True,
         "conclusion": "success", "source_qa_success": True,
         "scanned": 519, "pass": 489, "warmup": 30, "failed": 0,
@@ -93,6 +93,15 @@ class PublicGateTests(unittest.TestCase):
     def test_later_future_epoch_does_not_backfill(self):
         rows = full()[:-1] + [source(END+timedelta(hours=1), 2000)]
         self.assertFalse(self.assess(rows)["conditional_public_gate_pass"])
+
+    def test_legacy_unattested_cloudflare_labels_never_pass(self):
+        for old_label in ("cloudflare_primary", "cloudflare_backup", "github_source_kick"):
+            with self.subTest(label=old_label):
+                rows = full()
+                rows[0]["trigger_provenance"] = old_label
+                result = self.assess(rows)
+                self.assertIn("TRIGGER_PROVENANCE_UNVERIFIED",
+                              result["failed_epochs"][rows[0]["stamp"]])
 
     def test_missing_trigger_provenance_blocks_successful_workflow_dispatch(self):
         rows = full()
