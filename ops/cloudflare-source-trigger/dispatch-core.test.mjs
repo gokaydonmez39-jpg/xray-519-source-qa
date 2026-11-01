@@ -34,7 +34,7 @@ test('exactly one public Github workflow dispatch',async()=>{
   assert.equal(y.decision,'DUPLICATE_EPOCH_LOCKED');
   const post=t.calls.filter(x=>x.method==='POST');assert.equal(post.length,1);
   assert.equal(post[0].url,'https://api.github.com/repos/'+CONFIG.repository+'/actions/workflows/hourly-519-public-source.yml/dispatches');
-  assert.deepEqual(JSON.parse(post[0].body),{ref:'main',inputs:{max_markets:'519'}});
+  assert.deepEqual(JSON.parse(post[0].body),{ref:'main',inputs:{max_markets:'519'},return_run_details:true});
   assert.ok(!JSON.stringify(t.calls).includes('xray-crypto-godzilla-omega'));
 });
 test('GitHub workflow-run list GET is authenticated; anonymous 403 cannot block a healthy token',async()=>{
@@ -90,7 +90,7 @@ test('workflow_dispatch explicitly requests exact GitHub run ID, never inferred 
   assert.equal(out.runId,789);
   const post=t.calls.find(x=>x.method==='POST'&&x.url.includes('/dispatches'));
   assert.ok(post);
-  const payload=JSON.parse(post.options.body);
+  const payload=JSON.parse(post.body);
   assert.equal(payload.return_run_details,true);
   assert.equal(payload.ref,'main');
   assert.deepEqual(payload.inputs,{max_markets:CONFIG.scope});
@@ -100,7 +100,7 @@ test('legacy 204 response is accepted without asserting source proof',async()=>{
   const v=await t.run();
   assert.equal(v.decision,'DISPATCH_ACCEPTED_NOT_SOURCE_PASS');
   assert.equal(v.runId,null);
-  assert.equal(v.selfHeal?.retryAllowed,false);
+  assert.equal(v.selfHeal?.action,'REVIEW_REQUIRED');
 });
 test('204 without run id is NOT a source success claim',async()=>{const t=mock({dispatchStatus:204});assert.equal((await t.run()).decision,'DISPATCH_ACCEPTED_NOT_SOURCE_PASS')});
 test('concurrent requests reserve same key once',async()=>{const t=mock();const r=await Promise.all([t.run(),t.run()]);assert.equal(r.filter(x=>x.decision==='DISPATCH_ACCEPTED_NOT_SOURCE_PASS').length,1)});
