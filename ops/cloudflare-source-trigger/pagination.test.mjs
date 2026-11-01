@@ -38,11 +38,11 @@ test('100, 101 and 10000 unrelated historical runs do not permanently lock sourc
     const gets=t.calls.filter(x=>x.opts.method==='GET');
     assert.equal(gets.length,7,'one public receipt lookup and six scoped workflow-run checks');
     assert.ok(gets[0].url.pathname.includes('/contents/'));
-    assert.equal(gets[0].opts.headers.Authorization,undefined,'receipt GET stays anonymous');
+    assert.equal(gets[0].opts.headers.Authorization,'Bearer '+t.arg.token,'receipt GET uses the existing token');
     assert.ok(gets.slice(1).every(x=>
       x.url.pathname.endsWith('/actions/workflows/'+CONFIG.workflowFile+'/runs')&&
       x.opts.headers.Authorization==='Bearer '+t.arg.token),
-      'only the six allowed workflow-run GETs use the existing token');
+      'all seven allowlisted GitHub GETs use the existing scoped token');
     assert.equal((await t.run()).decision,'DUPLICATE_EPOCH_LOCKED');assert.equal(posts(t).length,1);
   }
 });
