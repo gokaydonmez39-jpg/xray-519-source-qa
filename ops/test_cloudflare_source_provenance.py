@@ -41,6 +41,47 @@ def event_do(trace=TRACE, run_id=RUN, decision="DISPATCH_ACCEPTED_NOT_SOURCE_PAS
         "source":source
     }
 
+class EvidenceCollectorIntegrationTests(unittest.TestCase):
+    def _case(self, event="workflow_dispatch"):
+        from ops.evidence_collector import WORKFLOW_ID, WORKFLOW_NAME, REPO
+        pair = {"stamp": STAMP, "run_id": RUN, "run_attempt": 1}
+        run = {"id": RUN, "workflow_id": WORKFLOW_ID, "name": WORKFLOW_NAME,
+               "run_attempt": 1, "head_branch": "main",
+               "head_repository": {"full_name": REPO},
+               "status": "completed", "conclusion": "success",
+               "created_at": "2026-11-01T20:01:54Z", "event": event}
+        return pair, run
+
+    def test_unproven_workflow_dispatch_remains_hold(self):
+        from ops.evidence_collector import verify_run
+        pair, run = self._case()
+        d = verify_run(pair,run)
+        self.assertFalse(d["trigger_independently_verified"])
+        self.assertEqual(d["trigger_provenance"], "unknown_external_origin")
+
+    def test_exact_cloudflare_trace_run_unlocks_only_origin_for_that_epoch(self):
+        from ops.evidence_collector import verify_run
+        pair, run = self._case()
+        d = verify_run(pair,run,cloudflare_run_id=RUN)
+        self.assertTrue(d["trigger_independently_verified"])
+        self.assertEqual(d["trigger_provenance"],"cloudflare_cron_trace_exact_run")
+        self.assertEqual(d["run_id"],RUN)
+        self.assertEqual(d["pair_bytes_independently_verified"],True)
+
+    def test_wrong_run_id_cannot_promote_workflow_dispatch(self):
+        from ops.evidence_collector import verify_run
+        pair, run = self._case()
+        for wrong in (RUN+1,str(RUN),True,None):
+            d = verify_run(pair,run,cloudflare_run_id=wrong)
+            self.assertFalse(d["trigger_independently_verified"])
+
+    def test_native_schedule_proven_without_cloudflare(self):
+        from ops.evidence_collector import verify_run
+        pair,run=self._case("schedule")
+        d=verify_run(pair,run)
+        self.assertTrue(d["trigger_independently_verified"])
+        self.assertEqual(d["trigger_provenance"],"github_native_schedule")
+
 class ProofTests(unittest.TestCase):
     def test_valid_primary_proof(self):
         self.assertEqual(prove([event_root(),event_do()],END), {STAMP:RUN})
