@@ -21,7 +21,7 @@ const HARD_HOLD = new Set([
 
 // Use fixed codes rather than untrusted server response bodies. Never log
 // tokens, arbitrary exception strings, URLs or GitHub response payloads.
-export function classifyDecision({ decision, httpStatus = null } = {}) {
+export function classifyDecision({ decision, httpStatus = null, attempt = 'unknown' } = {}) {
   const result = { schema: 'XRAY519_SELF_HEAL_POLICY_V1',
     mode: 'REVIEW_REQUIRED', reason: 'UNKNOWN_DECISION',
     automaticCodeChange: false, automaticLockReset: false };
@@ -36,6 +36,7 @@ export function classifyDecision({ decision, httpStatus = null } = {}) {
     return {...result, mode:'HOLD_NO_RETRY', reason:'SAFETY_GATE'};
   }
   if (PRE_POST_RETRYABLE.has(decision)) {
+    if (attempt === 'backup') return {...result, mode:'HOLD_NO_RETRY', reason:'BACKUP_EXHAUSTED'};
     if (httpStatus === 401 || httpStatus === 403) {
       return {...result, mode:'REVIEW_REQUIRED', reason:'GITHUB_AUTH_OR_RATE_RESTRICTION'};
     }
