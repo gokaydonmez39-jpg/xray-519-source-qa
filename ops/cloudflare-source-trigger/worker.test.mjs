@@ -27,7 +27,8 @@ import vm from 'node:vm';
 
 // Exercise the real scheduled() implementation with the Cloudflare-only import
 // replaced by a stub. No external requests, live secrets or scheduled events.
-function cronHarness({ decision = 'INVALID_SCHEDULE', status = 200, reject = false, malformed = false, cron = '1 * * * *' } = {}) {
+function cronHarness({ decision = 'INVALID_SCHEDULE', status = 200, reject = false, malformed = false,
+  cron = '1 * * * *', duplicateLockState = null } = {}) {
   let invoked = 0, noRetry = 0;
   const logs = [], errors = [];
   const source = fs.readFileSync(new URL('./worker.mjs', import.meta.url), 'utf8')
@@ -42,7 +43,8 @@ function cronHarness({ decision = 'INVALID_SCHEDULE', status = 200, reject = fal
   vm.runInNewContext(source + '\n' + 'globalThis.cronWorker = workerEntry;', context);
   const controller = {
     cron,
-    scheduledTime: Date.parse('2026-10-31T13:01:45.563Z'),
+    scheduledTime: Date.parse(cron === '6 * * * *'
+      ? '2026-10-31T13:06:45.563Z' : '2026-10-31T13:01:45.563Z'),
     noRetry: () => { noRetry += 1; },
   };
   const env = {
@@ -53,7 +55,8 @@ function cronHarness({ decision = 'INVALID_SCHEDULE', status = 200, reject = fal
           invoked += 1;
           if (reject) throw new Error('fake network failure');
           if (malformed) return {status, json: async () => {throw new Error('bad json')}};
-          return {status, json: async () => ({decision})};
+          return {status, json: async () => ({decision,
+            ...(duplicateLockState === null ? {} : {duplicateLockState})})};
         },
       }),
     },
@@ -86,6 +89,61 @@ for (const decision of ['INVALID_SCHEDULE', 'SECRET_NOT_CONFIGURED', 'GITHUB_RUN
     assert.ok(s.errors.some(v => v.includes('XRAY_PUBLIC_DISPATCH_NOT_ACCEPTED')));
   });
 }
+
+
+const expectedHandledStates = [
+  'DISPATCH_ACCEPTED_NOT_SOURCE_PASS',
+  'BACKUP_DISPATCH_ACCEPTED_NOT_SOURCE_PASS',
+  'EXISTING_SOURCE_RECEIPT',
+  'EXISTING_SOURCE_RUN',
+  'SOURCE_RUN_ALREADY_ACTIVE',
+  'BACKUP_EXISTING_SOURCE_RECEIPT',
+  'BACKUP_EXISTING_SOURCE_RUN',
+  'BACKUP_SOURCE_RUN_ALREADY_ACTIVE',
+];
+for (const lockState of expectedHandledStates) {
+  test('backup :06 recognized duplicate '+lockState+' is INFO no-op not an error', async () => {
+    const h = cronHarness({cron:'6 * * * *', decision:'DUPLICATE_EPOCH_LOCKED',
+      duplicateLockState:lockState});
+    await h.run();
+    const p = h.snapshot();
+    assert.equal(p.invoked, 1);
+    assert.equal(p.noRetry, 0);
+    assert.equal(p.errors.length, 0);
+    assert.ok(p.logs.some(v => v[0] === 'XRAY_PUBLIC_DISPATCH_BACKUP_NOOP'));
+  });
+}
+
+for (const lockState of [null, 'RESERVED', 'BACKUP_RESERVED_PREPOST',
+  'GITHUB_HTTP_ACCESS_BLOCKED', 'GITHUB_RUNS_UNAVAILABLE',
+  'GITHUB_NETWORK_OR_RESPONSE_UNKNOWN', 'POST_RESERVATION_AUDIT_FAILURE',
+  'READBACK_UNAVAILABLE', 'UNKNOWN_STATE']) {
+  test('backup :06 locked '+lockState+' stays true failure with no re-dispatch', async () => {
+    const h = cronHarness({cron:'6 * * * *', decision:'DUPLICATE_EPOCH_LOCKED',
+      duplicateLockState:lockState});
+    await assert.rejects(h.run(), /XRAY_PUBLIC_DISPATCH_NOT_ACCEPTED:DUPLICATE_EPOCH_LOCKED/);
+    const p=h.snapshot();
+    assert.equal(p.invoked,1);
+    assert.equal(p.noRetry,1);
+    assert.ok(p.errors.some(v=>v[0]==='XRAY_PUBLIC_DISPATCH_NOT_ACCEPTED'));
+  });
+}
+
+test('primary :01 duplicate remains a true failure even if existing state accepted',async()=>{
+  const h = cronHarness({cron:'1 * * * *',decision:'DUPLICATE_EPOCH_LOCKED',
+    duplicateLockState:'DISPATCH_ACCEPTED_NOT_SOURCE_PASS'});
+  await assert.rejects(h.run(), /DUPLICATE_EPOCH_LOCKED/);
+  assert.equal(h.snapshot().noRetry,1);
+});
+
+test('source accepted is not mislabeled SOURCE_PASS by backup NOOP',async()=>{
+  const h=cronHarness({cron:'6 * * * *',decision:'DUPLICATE_EPOCH_LOCKED',
+    duplicateLockState:'DISPATCH_ACCEPTED_NOT_SOURCE_PASS'});
+  await h.run();
+  const p=JSON.stringify(h.snapshot());
+  assert.ok(p.includes('BACKUP_NOOP'));
+  assert.ok(!p.includes('SOURCE_PASS_CONFIRMED'));
+});
 
 test('unknown dispatch decision never logs attacker-controlled content', async () => {
   const h = cronHarness({decision: 'LEAK_FAKE_SECRET_ABC'});
@@ -156,6 +214,7 @@ test('duplicate audit identifies prior and current reservation without mutation 
   assert.equal(h.logs[0].duplicateLock.state,'RESERVED');
   assert.equal(h.sqlCalls.filter(c => c.query.startsWith('SELECT')).length,2);
   assert.equal(h.sqlCalls.filter(c => /UPDATE|DELETE|INSERT/.test(c.query)).length,0);
+  assert.equal((await (await h.run()).json()).duplicateLockState,'RESERVED');
   assert.ok(!JSON.stringify(h.logs).includes('TEST_NOT_REAL_SECRET'));
 });
 
@@ -165,6 +224,7 @@ test('unknown state is sanitized rather than echoed to Cloudflare log', async ()
   }});
   await h.run();
   assert.equal(h.logs[0].duplicateLock.state,'UNKNOWN_STATE');
+  assert.equal((await (await h.run()).json()).duplicateLockState,'UNKNOWN_STATE');
   assert.ok(!JSON.stringify(h.logs).includes('FAKE_PRIVATE_SECRET'));
   assert.equal(h.logs[0].previousLock.state,'ABSENT');
 });
@@ -175,6 +235,7 @@ test('unavailable diagnostic SELECT never bypasses or releases source epoch lock
   assert.equal((await response.json()).decision,'DUPLICATE_EPOCH_LOCKED');
   assert.equal(h.logs[0].previousLock.state,'READBACK_UNAVAILABLE');
   assert.equal(h.logs[0].duplicateLock.state,'READBACK_UNAVAILABLE');
+  assert.equal((await (await h.run()).json()).duplicateLockState,'READBACK_UNAVAILABLE');
   assert.equal(h.sqlCalls.filter(c => /UPDATE|DELETE|INSERT/.test(c.query)).length,0);
 });
 
