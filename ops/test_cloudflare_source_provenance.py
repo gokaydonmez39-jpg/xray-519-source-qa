@@ -83,6 +83,51 @@ class EvidenceCollectorIntegrationTests(unittest.TestCase):
         self.assertEqual(d["trigger_provenance"],"github_native_schedule")
 
 class ProofTests(unittest.TestCase):
+    def test_expected_backup_red_rows_count_once(self):
+        from ops.cloudflare_source_provenance import summarize_invocations
+        root=event_root(cron="6 * * * *",outcome="exception",
+                         stamp_ms=EPOCH_MS+370_000)
+        decision=event_do(stamp_ms=EPOCH_MS+370_001,
+                          decision="DUPLICATE_EPOCH_LOCKED")
+        decision["source"]["duplicateLock"]={"state":"DISPATCH_ACCEPTED_NOT_SOURCE_PASS"}
+        copies=[root,decision,decision,dict(decision)]
+        summary=summarize_invocations(copies,END)
+        self.assertEqual(summary["raw_log_rows"],4)
+        self.assertEqual(summary["distinct_scheduled_invocations"],1)
+        self.assertEqual(summary["expected_backup_duplicate"],1)
+        self.assertEqual(summary["real_failures_or_holds"],0)
+
+    def test_blocked_backup_stays_true_hold(self):
+        from ops.cloudflare_source_provenance import summarize_invocations
+        root=event_root(cron="6 * * * *",outcome="exception",
+                        stamp_ms=EPOCH_MS+370_000)
+        decision=event_do(stamp_ms=EPOCH_MS+370_001,
+                          decision="DUPLICATE_EPOCH_LOCKED")
+        decision["source"]["duplicateLock"]={"state":"GITHUB_HTTP_ACCESS_BLOCKED"}
+        summary=summarize_invocations([root,decision],END)
+        self.assertEqual(summary["real_failures_or_holds"],1)
+        self.assertEqual(summary["expected_backup_duplicate"],0)
+
+    def test_unknown_trace_cannot_be_green(self):
+        from ops.cloudflare_source_provenance import summarize_invocations
+        x=summarize_invocations([event_root()],END)
+        self.assertEqual(x["unclassified_holds"],1)
+        self.assertEqual(x["accepted_not_source_pass"],0)
+
+    def test_successful_primary_is_accepted_not_source_pass(self):
+        from ops.cloudflare_source_provenance import summarize_invocations
+        x=summarize_invocations([event_root(),event_do()],END)
+        self.assertEqual(x["accepted_not_source_pass"],1)
+        self.assertEqual(x["expected_backup_duplicate"],0)
+
+    def test_one_failure_trace_with_3_red_lines_is_not_3_failures(self):
+        from ops.cloudflare_source_provenance import summarize_invocations
+        root=event_root(outcome="exception")
+        err=event_do(decision="GITHUB_RUNS_UNAVAILABLE")
+        x=summarize_invocations([root,err,err,err],END)
+        self.assertEqual(x["real_failures_or_holds"],1)
+        self.assertEqual(x["distinct_scheduled_invocations"],1)
+
     def test_valid_primary_proof(self):
         self.assertEqual(prove([event_root(),event_do()],END), {STAMP:RUN})
     def test_valid_backup_proof(self):
