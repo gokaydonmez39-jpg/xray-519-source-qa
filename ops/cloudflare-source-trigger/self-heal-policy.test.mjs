@@ -78,7 +78,7 @@ function simulation({
     reserve:key=>{if(locks.has(key))return false;locks.add(key);return true},
     mark:async (key,state)=>marks.push(state),
   };
-  return { calls,marks,run:()=>executeOnce(arg) };
+  return { calls, marks, arg, run:()=>executeOnce(arg) };
 }
 test('AUTO-HEAL transient receipt 503 -> 404, no replay or secret exposure',async()=>{
   const t=simulation({receipt:[503,404]});
@@ -149,5 +149,34 @@ test('backup failure is terminal, never suggests third try',async()=>{
   assert.equal(x.attempt,'backup');
   assert.equal(x.selfHeal.mode,'HOLD_NO_RETRY');
   assert.equal(x.selfHeal.reason,'BACKUP_EXHAUSTED');
+  assert.equal(t.calls.filter(v=>v.method==='POST').length,0);
+});
+
+test('live clock crossing nominal 90s before POST blocks, even after green GET',async()=>{
+  const t=simulation();
+  let reads=0;
+  t.arg.clockMs=()=>{
+    reads++;
+    return hour+CONFIG.offsetMs+(reads>=8 ? 90_001 : 70_000);
+  };
+  const x=await t.run();
+  assert.equal(x.decision,'STALE_OR_EARLY_CRON');
+  assert.equal(x.selfHeal.mode,'HOLD_NO_RETRY');
+  assert.equal(t.calls.filter(v=>v.method==='GET').length,7);
+  assert.equal(t.calls.filter(v=>v.method==='POST').length,0);
+  assert.equal(t.marks.at(-1),'STALE_OR_EARLY_CRON');
+});
+test('live clock remaining within 90s allows exactly one POST',async()=>{
+  const t=simulation();
+  t.arg.clockMs=()=>hour+CONFIG.offsetMs+89_999;
+  const x=await t.run();
+  assert.equal(x.decision,'DISPATCH_ACCEPTED_NOT_SOURCE_PASS');
+  assert.equal(t.calls.filter(v=>v.method==='POST').length,1);
+});
+test('invalid live clock fails closed before dispatch',async()=>{
+  const t=simulation();
+  t.arg.clockMs=()=>NaN;
+  const x=await t.run();
+  assert.equal(x.decision,'STALE_OR_EARLY_CRON');
   assert.equal(t.calls.filter(v=>v.method==='POST').length,0);
 });
