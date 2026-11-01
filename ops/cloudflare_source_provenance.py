@@ -184,6 +184,91 @@ def from_query_response(payload, end_stamp):
         raise ProvenanceError("CLOUDFLARE_QUERY_TRUNCATED")
     return prove(records, end_stamp)
 
+HANDLED_DUPLICATE_STATES = frozenset({
+    "DISPATCH_ACCEPTED_NOT_SOURCE_PASS",
+    "BACKUP_DISPATCH_ACCEPTED_NOT_SOURCE_PASS",
+    "EXISTING_SOURCE_RECEIPT", "EXISTING_SOURCE_RUN",
+    "SOURCE_RUN_ALREADY_ACTIVE",
+    "BACKUP_EXISTING_SOURCE_RECEIPT", "BACKUP_EXISTING_SOURCE_RUN",
+    "BACKUP_SOURCE_RUN_ALREADY_ACTIVE",
+})
+ACCEPTED_DECISIONS = frozenset({
+    "DISPATCH_ACCEPTED_NOT_SOURCE_PASS",
+    "EXISTING_SOURCE_RECEIPT", "EXISTING_SOURCE_RUN",
+    "SOURCE_RUN_ALREADY_ACTIVE",
+})
+
+def summarize_invocations(events, end_stamp):
+    """Group log lines by a real scheduled trace, not by red event rows.
+
+    Each actual scheduled invocation contributes at most one result. Multiple
+    console errors and uncaught exception logs for the same trace are not
+    multiple source failures. Unknown/missing diagnostic is NOT a success.
+    """
+    end = end_epoch(end_stamp)
+    low = int((end-timedelta(hours=47)).timestamp()*1000)
+    high = int((end+timedelta(minutes=10)).timestamp()*1000)
+    if not isinstance(events,list) or len(events)>MAX_EVENTS:
+        raise ProvenanceError("CLOUDFLARE_EVENT_RANGE_INVALID")
+    groups = {}
+    for e in events:
+        if not isinstance(e,dict):
+            continue
+        m,w=e.get("$metadata"),e.get("$workers")
+        if not isinstance(m,dict) or not isinstance(w,dict):
+            continue
+        if m.get("service")!=SCRIPT or w.get("scriptName")!=SCRIPT:
+            continue
+        tid=m.get("traceId")
+        if not isinstance(tid,str) or not TRACE_RE.fullmatch(tid):
+            continue
+        at=e.get("timestamp")
+        if type(at) is not int or not low<=at<high:
+            continue
+        group=groups.setdefault(tid,{"root":[],"logs":[]})
+        if m.get("type")=="cf-worker-event" and w.get("eventType")=="scheduled":
+            cron=(w.get("event") or {}).get("cron")
+            if cron in ALLOWED_CRONS:
+                group["root"].append({"cron":cron,"outcome":w.get("outcome"),"timestamp":at})
+        elif m.get("type")=="cf-worker-log":
+            p=_log_payload(e)
+            if isinstance(p,dict):
+                group["logs"].append(p)
+    statuses=[]
+    for group in groups.values():
+        if len(group["root"])!=1:
+            continue
+        root=group["root"][0]
+        decisions=[log for log in group["logs"] if log.get("event")=="XRAY_PUBLIC_DISPATCH"]
+        # Ambiguous duplicate log lines with differing decisions are HOLD.
+        if len({x.get("decision") for x in decisions})>1:
+            status="UNKNOWN"
+        elif not decisions:
+            status="UNKNOWN"
+        else:
+            last=decisions[-1]
+            decision=last.get("decision")
+            lock=(last.get("duplicateLock") or {})
+            if (root["cron"]=="6 * * * *" and decision=="DUPLICATE_EPOCH_LOCKED"
+                    and isinstance(lock,dict) and
+                    lock.get("state") in HANDLED_DUPLICATE_STATES):
+                status="EXPECTED_BACKUP_DUPLICATE"
+            elif root["outcome"]=="ok" and decision in ACCEPTED_DECISIONS:
+                status="ACCEPTED_NOT_SOURCE_PASS"
+            elif decision=="DUPLICATE_EPOCH_LOCKED":
+                status="LOCK_HOLD"
+            else:
+                status="FAILURE_OR_HOLD"
+        statuses.append(status)
+    return {
+        "raw_log_rows":len(events),
+        "distinct_scheduled_invocations":len(statuses),
+        "expected_backup_duplicate":statuses.count("EXPECTED_BACKUP_DUPLICATE"),
+        "accepted_not_source_pass":statuses.count("ACCEPTED_NOT_SOURCE_PASS"),
+        "real_failures_or_holds":statuses.count("FAILURE_OR_HOLD")+statuses.count("LOCK_HOLD"),
+        "unclassified_holds":statuses.count("UNKNOWN"),
+    }
+
 def fetch_verified(end_stamp, account_id, token, transport=None):
     """Only POST query, never write Worker code, data, schedules or secrets.
 
