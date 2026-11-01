@@ -208,6 +208,22 @@ def verify_run(pair, run, cloudflare_run_id=None):
             "pair_canonical_independently_verified": True}
 
 
+def _cloudflare_window_accepted(rows, counted_valid_hours):
+    """Cloudflare log COMPLETE is a 48-epoch claim, not an ANY-event claim.
+
+    Native GitHub-schedule origins can count toward the 48h source acceptance
+    if independently verified, but cannot alone prove a Cloudflare event.
+    Missing hours, source/hash failures and unknown provenance force HOLD.
+    """
+    if (not isinstance(rows, list) or len(rows) != 48 or
+            type(counted_valid_hours) is not int or counted_valid_hours != 48):
+        return False
+    return (any(row.get("trigger_provenance") == "cloudflare_cron_trace_exact_run"
+                for row in rows) and
+            all(row.get("trigger_independently_verified") is True
+                for row in rows))
+
+
 def collect(root, end_stamp, run_lookup, cloudflare_proof=None):
     """Never promote a partial history: failures are reported as HOLD."""
     end = _epoch_dt(end_stamp)
@@ -248,9 +264,7 @@ def collect(root, end_stamp, run_lookup, cloudflare_proof=None):
             sum(1 for row in rows
                 if row["trigger_provenance"] == "cloudflare_cron_trace_exact_run"),
         "cloudflare_log_verified":
-            bool(rows) and any(row["trigger_provenance"] ==
-                "cloudflare_cron_trace_exact_run" for row in rows) and
-            all(row["trigger_independently_verified"] for row in rows),
+            _cloudflare_window_accepted(rows, evaluation["counted_valid_hours"]),
         "private_p30_verified": False,
         "full_final_start": False,
     }
