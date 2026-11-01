@@ -165,7 +165,7 @@ def fetch_github_run(run_id, token):
     return result
 
 
-def verify_run(pair, run):
+def verify_run(pair, run, cloudflare_run_id=None):
     """Verify source-run metadata independently; Cloudflare origin remains HOLD."""
     stamp = pair["stamp"]
     epoch = _epoch_dt(stamp)
@@ -193,8 +193,13 @@ def verify_run(pair, run):
         raise EvidenceError("UNEXPECTED_RUN_EVENT")
     # GitHub cannot distinguish a manual workflow_dispatch from Cloudflare
     # without independently authenticated Cloudflare log/attestation.
-    trusted = event == "schedule"
-    provenance = ("github_native_schedule" if trusted else "unknown_external_origin")
+    cf_verified = (event == "workflow_dispatch" and
+                   type(cloudflare_run_id) is int and
+                   cloudflare_run_id == run["id"])
+    trusted = event == "schedule" or cf_verified
+    provenance = ("github_native_schedule" if event == "schedule" else
+                  "cloudflare_cron_trace_exact_run" if cf_verified else
+                  "unknown_external_origin")
     return {**pair, "kind": "SOURCE", "event": event,
             "trigger_provenance": provenance,
             "trigger_independently_verified": trusted,
@@ -203,9 +208,15 @@ def verify_run(pair, run):
             "pair_canonical_independently_verified": True}
 
 
-def collect(root, end_stamp, run_lookup):
+def collect(root, end_stamp, run_lookup, cloudflare_proof=None):
     """Never promote a partial history: failures are reported as HOLD."""
     end = _epoch_dt(end_stamp)
+    # Origin map must come from an independently authenticated Cloudflare
+    # Workers Observability query, never user claims or a GitHub dispatch.
+    if cloudflare_proof is None:
+        cloudflare_proof = {}
+    if not isinstance(cloudflare_proof, dict):
+        raise EvidenceError("CLOUDFLARE_PROOF_INVALID")
     rows, diagnostics = [], {}
     cache = {}
     for i in range(48):
@@ -215,7 +226,7 @@ def collect(root, end_stamp, run_lookup):
             rid = pair["run_id"]
             if rid not in cache:
                 cache[rid] = run_lookup(rid)
-            record = verify_run(pair, cache[rid])
+            record = verify_run(pair, cache[rid], cloudflare_proof.get(stamp))
             rows.append(record)
             if not record["trigger_independently_verified"]:
                 diagnostics[stamp] = ["CLOUDFLARE_OR_MANUAL_ORIGIN_UNVERIFIED"]
@@ -231,7 +242,15 @@ def collect(root, end_stamp, run_lookup):
         "conditional_public_gate_pass": evaluation["conditional_public_gate_pass"],
         "diagnostics": dict(sorted(diagnostics.items())),
         "acceptance": evaluation,
-        "cloudflare_log_verified": False,
+        # A successful API lookup with one matched event is not proof that
+        # every source epoch has trusted origin. Gate on per-epoch records.
+        "cloudflare_origin_verified_hours":
+            sum(1 for row in rows
+                if row["trigger_provenance"] == "cloudflare_cron_trace_exact_run"),
+        "cloudflare_log_verified":
+            bool(rows) and any(row["trigger_provenance"] ==
+                "cloudflare_cron_trace_exact_run" for row in rows) and
+            all(row["trigger_independently_verified"] for row in rows),
         "private_p30_verified": False,
         "full_final_start": False,
     }
