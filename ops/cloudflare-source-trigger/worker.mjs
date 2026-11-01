@@ -107,6 +107,9 @@ export class SourceDispatchLock extends DurableObject {
       if (result.decision === 'DUPLICATE_EPOCH_LOCKED') {
         const currentEpoch = new Date(hourMs).toISOString().slice(0, 13) + ':00:00Z';
         fields.duplicateLock = readLock(currentEpoch);
+        // Pass only a sanitized read-only enum to the scheduled() caller.
+        // Do NOT change the actual duplicate decision or mutate SQLite.
+        result.duplicateLockState = fields.duplicateLock.state;
       }
     }
     // No secrets, private strategy, or market signals in audit output.
@@ -173,6 +176,26 @@ export default {
       'GITHUB_NETWORK_OR_RESPONSE_UNKNOWN',
     ]);
     const decision = result && result.decision;
+    // A normal :06 backup arrives after :01 already handled the SAME UTC
+    // epoch. Its SQLite duplicate is expected and must be an INFO no-op,
+    // not an exception. This is never a SOURCE_PASS assertion.
+    // A missing/ambiguous/blocked lock, or primary :01 duplicate, still
+    // throws for real operational alerting and never resets an epoch.
+    const handledPriorEpochStates = new Set([
+      'DISPATCH_ACCEPTED_NOT_SOURCE_PASS',
+      'BACKUP_DISPATCH_ACCEPTED_NOT_SOURCE_PASS',
+      'EXISTING_SOURCE_RECEIPT', 'EXISTING_SOURCE_RUN',
+      'SOURCE_RUN_ALREADY_ACTIVE',
+      'BACKUP_EXISTING_SOURCE_RECEIPT', 'BACKUP_EXISTING_SOURCE_RUN',
+      'BACKUP_SOURCE_RUN_ALREADY_ACTIVE',
+    ]);
+    if (controller.cron === '6 * * * *' &&
+        decision === 'DUPLICATE_EPOCH_LOCKED' &&
+        handledPriorEpochStates.has(result.duplicateLockState)) {
+      console.log('XRAY_PUBLIC_DISPATCH_BACKUP_NOOP',
+        result.duplicateLockState, 'SOURCE_PASS_NOT_ASSERTED');
+      return;
+    }
     if (!accepted.has(decision)) {
       controller.noRetry();
       const safeCode = knownBlocked.has(decision) ? decision : 'UNEXPECTED_DECISION';
