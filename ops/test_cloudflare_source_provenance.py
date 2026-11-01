@@ -167,8 +167,15 @@ class ProofTests(unittest.TestCase):
         for mode in ("text", "message"):
             self.assertEqual(prove([event_root(),event_do(source_mode=mode)],END),
                              {STAMP:RUN})
-    def test_wrong_worker_log_type_must_not_promote(self):
-        d=event_do(); d["$metadata"]["type"]="cf-worker-log"
+    def test_documented_and_observed_cloudflare_log_type_both_strictly_verified(self):
+        for log_type in ("cf-worker", "cf-worker-log"):
+            with self.subTest(type=log_type):
+                d=event_do()
+                d["$metadata"]["type"]=log_type
+                self.assertEqual(prove([event_root(),d],END),{STAMP:RUN})
+        d=event_do();d["$metadata"]["type"]="cf-worker-event"
+        self.assertEqual(prove([event_root(),d],END),{})
+        d=event_do();d["$metadata"]["type"]="untrusted"
         self.assertEqual(prove([event_root(),d],END),{})
 
     def test_no_scheduled_parent(self):
