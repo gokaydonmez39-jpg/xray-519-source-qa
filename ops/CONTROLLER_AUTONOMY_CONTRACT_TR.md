@@ -6,7 +6,7 @@ Hourly source runs, backup Cron, selfHeal classification and immutable artifact 
 - 2026-11-01 13:10Z native `schedule` run `41309984339` was `success` **but NOOP**, because a valid 13:00Z 519 pair already existed. Workflow success must not be counted as a second source PASS.
 - The 2026-11-01 11:00Z source hole cannot be repaired later.
 - Historical `main` before this PR was `7c7ebb4921d0528434eb6c12414134fa07b52631`, PR #27 merged and Cloudflare build succeeded, but live `selfHeal` proof requires a Worker log.
-- Existing 48-hour automation has `COUNT=52` from 2026-10-31 21:15 Europe/Istanbul and expires **before** a fresh 48 consecutive hour window following the 11:00Z hole could finish. Expiry must never imply FINAL. Separate user decision needed to extend the automation; this PR does not change any task.
+- Existing salt-okunur otomasyonun kuralı kullanıcı isteği kapsamında `COUNT=52` yerine `COUNT=100` olarak uzatıldı; `is_enabled=true` doğrulandı. `next_run_time` alanı hâlâ `null` döndüğünden yeni çalışmanın zamanında gerçekleştiği söylenemez. Süre dolması FINAL kabul değildir.
 
 ## A. Pure offline source gate
 `ops/autonomy_acceptance.py::evaluate_public_window(records, end_stamp=...)`
@@ -14,7 +14,7 @@ Hourly source runs, backup Cron, selfHeal classification and immutable artifact 
 - Only unique `kind=SOURCE` rows count, with unique GitHub run ID matching receipt runner identity, matching event and independently checked trigger provenance.
 - `kind=NOOP` counts ZERO. Two distinct source-claims for one epoch, missing hours, fake provenance, reused run ID, unsuccessful source, inconsistent 519 accounting, technical FAIL, missing/uncorroborated receipt+bridge SHA256, unauthorized private execution, orders and notifications all fail.
 - A passed synthetic/externally supplied ledger is labeled **`SOURCE_ONLY_OFFLINE_ELIGIBILITY_NOT_LIVE_ACCEPTANCE`**. The function explicitly always returns `live_evidence_independently_collected=false` and `full_final_start=false`. The caller's boolean claims/strings are *not* cryptographic verification.
-- No external network, GitHub token, cron, private repo access or mutation. To become an operational controller, an independent authenticated ingestion service must verify raw bytes, canonical receipt+bridge digest, Cloudflare Worker version, GitHub workflow event provenance, and timestamp consistency. **That service is NOT built in this PR.**
+- Bu saf kabul fonksiyonu ağ/kimlik bilgisi kullanmaz. Aynı PR içindeki yeni `ops/evidence_collector.py`, public main checkout gerçek gzip bytes+canonical SHA ve salt-okunur GitHub workflow-run API metadata doğrulaması yapar; `.github/workflows/xray-519-readonly-evidence-controller.yml` kaynak çalışma tamamlanınca veya :17 UTC'de denetim tetiklemek üzere STAGED'dir. **Cloudflare Worker canlı logu/sürüm orijini doğrulama ve üretim deploy hâlâ eksiktir**; GitHub `workflow_dispatch` olayı Cloudflare kanıtı yerine geçmez.
 
 ## B. Evidence-gated candidate promotion
 `evaluate_candidate(candidate)` only returns `RESEARCH_SHADOW_ELIGIBLE` or `HOLD_RESEARCH`, NEVER code merge, source-runtime install, model verified, real alpha or trading permission.
@@ -31,14 +31,14 @@ Hourly source runs, backup Cron, selfHeal classification and immutable artifact 
 - **Thorp/Simons/Taleb:** capital loss before return, realistic friction, purged OOS and black-swan/survivorship stress.
 
 ## P0–P3 actual remaining end-to-end gaps
-P0 — **Trusted evidence ingestion + 48h acceptance**: generate and independently validate source event identity, worker invocation/version, GitHub run, immutable receipt+bridge SHA and lateness; continuous missing hour blocks. Do not treat green CI or a red/blue Cron log as source PASS.
+P0 — **Trusted evidence ingestion + 48h acceptance**: GitHub raw pair, independent receipt canonical SHA ve source-run provenance okuyan kontrolcü STAGED; Cloudflare invocation/version doğrulaması eksik. 48 gerçek devamlı saat olmadan PASS yok.
 P0 — **Real post-deploy selfHeal**: verify natural :01/:06 decision and whether 403 fixed under live authenticated GitHub GET; NOT proven from Worker build.
 P1 — **Recovery controller orchestration**: observed decision→approved safety policy→single allowed recovery→proof→closed incident; no uncertain POST retries or SQL deletion.
 P1 — **Automated candidate lifecycle**: discover→license/security review→reproducible independent PIT/OOS tests→research shadow→paper benchmark→human-approved source promotion. Offline decision gate here is a first component, not a working bot or installation.
 P1 — **Private P30**: historical `SOURCE_FILE_UNSAFE` remains without new, cost-approved, live private PASS.
 P2 — **14-day native WSS / device delivery ACK**, 60-day paper/OOS, market regimes and executable signal risk controls: independent acceptance and cost protection.
 P2 — **Trusted patch bot** requires isolated GitHub App identity, least privilege, branch protection, adversarial PR tests, no automatic production merge and approval; absent here.
-P3 — 48h monitor extension, incident prioritization, rollback drill, cost telemetry and user-facing evidence digest.
+P3 — 48 saat ChatGPT monitörü `COUNT=100` biçiminde uzatıldı (sonraki run zamanı belirsiz); public Github native read-only evidence job henüz üretimde değil; rollback, maliyet ve cihaz teslim raporu ayrı.
 
 ## Hard safety constraints and pre-mortem
 False PASS (green NOOP counted twice): fail if duplicated epoch or NOOP; only independent immutable artifacts count.
