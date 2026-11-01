@@ -34,7 +34,7 @@ test('exactly one public Github workflow dispatch',async()=>{
   assert.equal(y.decision,'DUPLICATE_EPOCH_LOCKED');
   const post=t.calls.filter(x=>x.method==='POST');assert.equal(post.length,1);
   assert.equal(post[0].url,'https://api.github.com/repos/'+CONFIG.repository+'/actions/workflows/hourly-519-public-source.yml/dispatches');
-  assert.deepEqual(JSON.parse(post[0].body),{ref:'main',inputs:{max_markets:'519'}});
+  assert.deepEqual(JSON.parse(post[0].body),{ref:'main',inputs:{max_markets:'519'},return_run_details:true});
   assert.ok(!JSON.stringify(t.calls).includes('xray-crypto-godzilla-omega'));
 });
 test('GitHub workflow-run list GET is authenticated; anonymous 403 cannot block a healthy token',async()=>{
@@ -82,6 +82,27 @@ test('missing token never accesses Github',async()=>{const t=mock();t.arg.token=
 test('receipt API error and run API error both block',async()=>{const a=mock({receipt:403});assert.equal((await a.run()).decision,'SOURCE_RECEIPT_LOOKUP_UNAVAILABLE');const b=mock({listStatus:429});assert.equal((await b.run()).decision,'GITHUB_RUNS_UNAVAILABLE')});
 test('dispatch API error is locked, not retried',async()=>{const t=mock({dispatchStatus:403});assert.equal((await t.run()).decision,'DISPATCH_REJECTED');assert.equal((await t.run()).decision,'DUPLICATE_EPOCH_LOCKED')});
 test('network uncertainty is fail-closed',async()=>{const t=mock({throwOn:'/dispatches'});assert.equal((await t.run()).decision,'GITHUB_NETWORK_OR_RESPONSE_UNKNOWN');assert.equal((await t.run()).decision,'DUPLICATE_EPOCH_LOCKED')});
+
+test('workflow_dispatch explicitly requests exact GitHub run ID, never inferred by clock',async()=>{
+  const t=mock();
+  const out=await t.run();
+  assert.equal(out.decision,'DISPATCH_ACCEPTED_NOT_SOURCE_PASS');
+  assert.equal(out.runId,789);
+  const post=t.calls.find(x=>x.method==='POST'&&x.url.includes('/dispatches'));
+  assert.ok(post);
+  const payload=JSON.parse(post.body);
+  assert.equal(payload.return_run_details,true);
+  assert.equal(payload.ref,'main');
+  assert.deepEqual(payload.inputs,{max_markets:CONFIG.scope});
+});
+test('legacy 204 response is accepted without asserting source proof',async()=>{
+  const t=mock({dispatchStatus:204});
+  const v=await t.run();
+  assert.equal(v.decision,'DISPATCH_ACCEPTED_NOT_SOURCE_PASS');
+  assert.equal(v.runId,null);
+  assert.equal(v.live_al_claim,undefined);
+  assert.equal(v.decision,'DISPATCH_ACCEPTED_NOT_SOURCE_PASS');
+});
 test('204 without run id is NOT a source success claim',async()=>{const t=mock({dispatchStatus:204});assert.equal((await t.run()).decision,'DISPATCH_ACCEPTED_NOT_SOURCE_PASS')});
 test('concurrent requests reserve same key once',async()=>{const t=mock();const r=await Promise.all([t.run(),t.run()]);assert.equal(r.filter(x=>x.decision==='DISPATCH_ACCEPTED_NOT_SOURCE_PASS').length,1)});
 test('unrelated old runs do not block the scoped source workflow',async()=>{const t=mock({runs:Array.from({length:100},(_,i)=>({id:i}))});assert.equal((await t.run()).decision,'DISPATCH_ACCEPTED_NOT_SOURCE_PASS')});
