@@ -53,6 +53,21 @@ class ControllerWorkflowContractTests(unittest.TestCase):
         self.assertIn('GITHUB_STEP_SUMMARY',code)
         self.assertIn('FULL FINAL START: **HOLD**',code)
 
+    def test_readonly_evidence_controller_is_actually_schedulable(self):
+        text=self.content
+        self.assertIn("workflow_run:",text)
+        self.assertIn("github.event.workflow_run.head_repository.full_name",text)
+        self.assertIn("cron: '17 * * * *'",text)
+        self.assertIn("runs-on: ubuntu-24.04",text)
+        self.assertNotIn("runs-on: [self-hosted",text)
+
+    def test_job_summary_always_has_final_hold(self):
+        text=self.content
+        self.assertIn("FULL FINAL START: **HOLD**",text)
+        self.assertIn("pair_and_run_verified_count",text)
+        self.assertIn("fully_qualified_source_hours",text)
+        self.assertNotIn("FULL FINAL START: PASS",text)
+
     def test_observability_failures_do_not_trigger_recovery(self):
         text=self.content
         self.assertNotIn("curl -X POST",text)
