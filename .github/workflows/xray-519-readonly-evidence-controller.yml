@@ -44,6 +44,8 @@ jobs:
           XRAY_EVENT_NAME: ${{ github.event_name }}
           XRAY_EVENT_PATH: ${{ github.event_path }}
           PYTHONDONTWRITEBYTECODE: '1'
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_OBSERVABILITY_TOKEN: ${{ secrets.CLOUDFLARE_OBSERVABILITY_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -54,6 +56,7 @@ jobs:
           from datetime import datetime, timezone, timedelta
           from pathlib import Path
           from ops.evidence_collector import collect, fetch_github_run
+          from ops.cloudflare_source_provenance import fetch_verified, ProvenanceError
 
           event = os.environ.get("XRAY_EVENT_NAME", "")
           now = datetime.now(timezone.utc)
@@ -77,8 +80,24 @@ jobs:
               sys.exit(2)
           stamp = end.strftime("%Y%m%dT%H00Z")
           token = os.environ.get("GITHUB_TOKEN", "")
+          cloudflare_proof = {}
+          cloudflare_counts = {}
+          cloudflare_status = "ORIGIN_HOLD_CREDENTIALS_NOT_CONFIGURED"
+          cf_account = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")
+          cf_token = os.environ.get("CLOUDFLARE_OBSERVABILITY_TOKEN", "")
+          if cf_account and cf_token:
+              try:
+                  cloudflare_proof, cloudflare_counts = fetch_verified(
+                      stamp, cf_account, cf_token, include_summary=True)
+                  cloudflare_status = "CLOUDFLARE_QUERY_PASS_EXACT_MATCH_REQUIRED"
+              except ProvenanceError:
+                  # No exception body or credential is ever printed.
+                  cloudflare_status = "CLOUDFLARE_QUERY_HOLD"
           report = collect(Path("."), stamp,
-                           lambda rid: fetch_github_run(rid, token))
+                           lambda rid: fetch_github_run(rid, token),
+                           cloudflare_proof=cloudflare_proof)
+          report["cloudflare_query_status"] = cloudflare_status
+          report["cloudflare_deduplicated_invocations"] = cloudflare_counts
           print("XRAY519_EVIDENCE_CONTROLLER_REPORT=" +
                 json.dumps(report,sort_keys=True,separators=(",",":")))
           current = report["diagnostics"].get(stamp, [])
@@ -87,6 +106,14 @@ jobs:
               out.write(f"- UTC epoch inspected: `{stamp}`\n")
               out.write(f"- Raw receipt+bridge and GitHub run pairs: `{report['pair_and_run_verified_count']}/48`\n")
               out.write(f"- Trusted-origin source epochs: `{report['fully_qualified_source_hours']}/48`\n")
+              out.write(f"- Cloudflare-origin exact-run matches: `{report['cloudflare_origin_verified_hours']}/48`\n")
+              out.write(f"- Cloudflare API status: `{cloudflare_status}`\n")
+              if cloudflare_counts:
+                  out.write(f"- CF raw log rows: `{cloudflare_counts['raw_log_rows']}`; "
+                            f"distinct scheduled invocations: `{cloudflare_counts['distinct_scheduled_invocations']}`\n")
+                  out.write(f"- CF expected backup duplicates: `{cloudflare_counts['expected_backup_duplicate']}`; "
+                            f"real HOLD/failure invocations: `{cloudflare_counts['real_failures_or_holds']}`; "
+                            f"unknown: `{cloudflare_counts['unclassified_holds']}`\n")
               out.write(f"- Public acceptance (conditional): `{report['conditional_public_gate_pass']}`\n")
               out.write("- FULL FINAL START: **HOLD** (private/WSS/OOS/phone unverified)\n")
               out.write(f"- Current epoch diagnostic codes: `{','.join(current) if current else 'NONE'}`\n")
