@@ -59,6 +59,26 @@ test('GitHub workflow-run list GET is authenticated; anonymous 403 cannot block 
   assert.equal([...t.status.values()][0],'DISPATCH_ACCEPTED_NOT_SOURCE_PASS');
 });
 
+test('receipt GET uses scoped token; anonymous 403 must not lose a valid source hour',async()=>{
+  const t=mock();
+  const originalFetch=t.arg.githubFetch;
+  const expected='Bearer '+t.arg.token;
+  t.arg.githubFetch=async(url,opts)=>{
+    if(url.includes('/contents/') && opts.headers.Authorization!==expected) {
+      return {status:403}; // models anonymous rate limiting before any dispatch
+    }
+    return originalFetch(url,opts);
+  };
+  const result=await t.run();
+  assert.equal(result.decision,'DISPATCH_ACCEPTED_NOT_SOURCE_PASS');
+  const reads=t.calls.filter(c=>c.url.includes('/contents/'));
+  assert.equal(reads.length,1);
+  assert.equal(reads[0].method,'GET');
+  assert.equal(reads[0].headers.Authorization,expected);
+  assert.equal(t.calls.filter(c=>c.method==='POST').length,1);
+  assert.equal(JSON.stringify(result).includes(t.arg.token),false);
+});
+
 test('authenticated HTTP 403 workflow-run list remains fail-closed without a dispatch',async()=>{
   const t=mock({listStatus:403});
   const first=await t.run();
