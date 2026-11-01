@@ -58,7 +58,7 @@ function out(decision, stamp, extra = {}) {
 // Runtime must provide a Durable Object SQLite-backed INSERT-OR-IGNORE reserve function.
 // The lock is taken *before* all GitHub calls, to bound to <=1 attempted dispatch per UTC epoch.
 // Failures deliberately remain locked (no automatic retries or ambiguous duplicate runs).
-export async function executeOnce({ scheduledTime, nowMs, token, reserve, mark, githubFetch, clockMs = () => Date.now() }) {
+export async function executeOnce({ scheduledTime, nowMs, token, reserve, mark, githubFetch, clockMs = () => nowMs }) {
   const time = epochOf(scheduledTime, nowMs);
   if (!time.ok) return out(time.code, null);
   if (typeof token !== 'string' || token.length < 24) return out('SECRET_NOT_CONFIGURED', time.stamp);
@@ -134,6 +134,14 @@ export async function executeOnce({ scheduledTime, nowMs, token, reserve, mark, 
         return await state('GITHUB_RUNS_INDETERMINATE');
       }
       return await state(query.created ? 'EXISTING_SOURCE_RUN' : 'SOURCE_RUN_ALREADY_ACTIVE', { runId: run.id });
+    }
+    // Even with a successful GET retry, never POST after the nominal 90s
+    // freshness gate; source data freshness outranks availability.
+    const beforePostMs = clockMs();
+    if (!Number.isSafeInteger(beforePostMs) ||
+        beforePostMs - (time.startMs + nominalOffset) > CONFIG.maxDelayMs ||
+        beforePostMs < nowMs - CONFIG.maxFutureMs) {
+      return await state('STALE_OR_EARLY_CRON');
     }
     const dispatchUrl = `${API}/actions/workflows/${CONFIG.workflowFile}/dispatches`;
     dispatchPostAttempted = true;
