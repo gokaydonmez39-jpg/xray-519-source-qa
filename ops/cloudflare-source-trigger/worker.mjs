@@ -24,6 +24,7 @@ export class SourceDispatchLock extends DurableObject {
     const result = await executeOnce({
       scheduledTime: message?.scheduledTime,
       nowMs: Date.now(),
+      clockMs: () => Date.now(),
       token: this.env.GITHUB_ACTIONS_DISPATCH_TOKEN,
       reserve: (epoch, nowMs, isBackup) => {
         backupInvocation = isBackup === true;
