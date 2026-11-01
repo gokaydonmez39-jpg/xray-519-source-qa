@@ -58,7 +58,7 @@ function out(decision, stamp, extra = {}) {
 // Runtime must provide a Durable Object SQLite-backed INSERT-OR-IGNORE reserve function.
 // The lock is taken *before* all GitHub calls, to bound to <=1 attempted dispatch per UTC epoch.
 // Failures deliberately remain locked (no automatic retries or ambiguous duplicate runs).
-export async function executeOnce({ scheduledTime, nowMs, token, reserve, mark, githubFetch }) {
+export async function executeOnce({ scheduledTime, nowMs, token, reserve, mark, githubFetch, clockMs = () => Date.now() }) {
   const time = epochOf(scheduledTime, nowMs);
   if (!time.ok) return out(time.code, null);
   if (typeof token !== 'string' || token.length < 24) return out('SECRET_NOT_CONFIGURED', time.stamp);
@@ -83,7 +83,7 @@ export async function executeOnce({ scheduledTime, nowMs, token, reserve, mark, 
   const nominalOffset = isBackup ? CONFIG.backupOffsetMs : CONFIG.offsetMs;
   async function preDispatchGet(url, options) {
     const first = await githubFetch(url, options);
-    const ageMs = Date.now() - (time.startMs + nominalOffset);
+    const ageMs = clockMs() - (time.startMs + nominalOffset);
     if (!mayRetryReadOnlyGet({
       status: first.status, used: safeGetRetryUsed, nominalAgeMs: ageMs,
     })) return first;
