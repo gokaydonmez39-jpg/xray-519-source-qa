@@ -53,7 +53,7 @@ test('GitHub workflow-run list GET is authenticated; anonymous 403 cannot block 
   assert.equal(listCalls.length,6);
   assert.ok(listCalls.every(c=>c.method==='GET'&&c.headers.Authorization===expectedAuth));
   const receipt=t.calls.find(c=>c.url.includes('/contents/'));
-  assert.equal(receipt.headers.Authorization,undefined,'leave existing public receipt GET unchanged');
+  assert.equal(receipt.headers.Authorization,expectedAuth,'receipt and run-list GET must both use the scoped token');
   assert.equal(t.calls.filter(c=>c.method==='POST').length,1);
   assert.equal(JSON.stringify(result).includes(t.arg.token),false,'token must never be in results');
   assert.equal([...t.status.values()][0],'DISPATCH_ACCEPTED_NOT_SOURCE_PASS');
