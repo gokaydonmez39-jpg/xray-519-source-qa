@@ -72,7 +72,7 @@ export async function executeOnce({ scheduledTime, nowMs, token, reserve, mark, 
   if (!locked) return out('DUPLICATE_EPOCH_LOCKED', time.stamp);
 
   async function state(code, extra = {}) {
-    try { await mark(time.epoch, code); }
+    try { await mark(time.epoch, code, extra); }
     catch { return out('POST_RESERVATION_AUDIT_FAILURE', time.stamp, { priorDecision: code }); }
     return out(code, time.stamp, { ...extra, attempt: isBackup ? 'backup' : 'primary', safeGetRetryUsed });
   }
