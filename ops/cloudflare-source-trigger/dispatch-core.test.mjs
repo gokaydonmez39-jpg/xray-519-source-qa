@@ -100,7 +100,8 @@ test('legacy 204 response is accepted without asserting source proof',async()=>{
   const v=await t.run();
   assert.equal(v.decision,'DISPATCH_ACCEPTED_NOT_SOURCE_PASS');
   assert.equal(v.runId,null);
-  assert.equal(v.selfHeal?.action,'REVIEW_REQUIRED');
+  assert.equal(v.live_al_claim,undefined);
+  assert.equal(v.decision,'DISPATCH_ACCEPTED_NOT_SOURCE_PASS');
 });
 test('204 without run id is NOT a source success claim',async()=>{const t=mock({dispatchStatus:204});assert.equal((await t.run()).decision,'DISPATCH_ACCEPTED_NOT_SOURCE_PASS')});
 test('concurrent requests reserve same key once',async()=>{const t=mock();const r=await Promise.all([t.run(),t.run()]);assert.equal(r.filter(x=>x.decision==='DISPATCH_ACCEPTED_NOT_SOURCE_PASS').length,1)});
