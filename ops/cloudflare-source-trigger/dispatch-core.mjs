@@ -148,9 +148,12 @@ export async function executeOnce({ scheduledTime, nowMs, token, reserve, mark, 
     const response = await githubFetch(dispatchUrl, {
       method: 'POST',
       headers: { ...headers(token), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ref: 'main', inputs: { max_markets: CONFIG.scope } }),
+      body: JSON.stringify({ ref: 'main', inputs: { max_markets: CONFIG.scope },
+        return_run_details: true }),
     });
-    // GitHub's Actions API may use 200 with run id (current version) or 204 empty response.
+    // GitHub return_run_details:true (documented 2026-02-19) makes the
+    // exact created workflow_run_id available on 200. Legacy 204 remains
+    // accepted but NEVER proves source completion or Cloudflare run origin.
     if (response.status !== 200 && response.status !== 204) {
       return await state('DISPATCH_REJECTED', { httpStatus: response.status });
     }
