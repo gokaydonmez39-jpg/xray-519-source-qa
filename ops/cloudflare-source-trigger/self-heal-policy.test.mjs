@@ -75,7 +75,7 @@ function simulation({
     scheduledTime:hour+offset,nowMs:hour+offset+age,
     clockMs:()=>hour+offset+age,
     token,githubFetch,
-    reserve:async key=>{if(locks.has(key))return false;locks.add(key);return true},
+    reserve:key=>{if(locks.has(key))return false;locks.add(key);return true},
     mark:async (key,state)=>marks.push(state),
   };
   return { calls,marks,run:()=>executeOnce(arg) };
