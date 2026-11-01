@@ -208,13 +208,14 @@ test('duplicate audit identifies prior and current reservation without mutation 
   }});
   const response=await h.run();
   assert.equal(response.status,200);
-  assert.equal((await response.json()).decision,'DUPLICATE_EPOCH_LOCKED');
+  const responseBody = await response.json();
+  assert.equal(responseBody.decision,'DUPLICATE_EPOCH_LOCKED');
+  assert.equal(responseBody.duplicateLockState,'RESERVED');
   assert.equal(h.logs[0].previousEpoch,'2026-10-31T13:00:00Z');
   assert.equal(h.logs[0].previousLock.state,'DISPATCH_REJECTED');
   assert.equal(h.logs[0].duplicateLock.state,'RESERVED');
   assert.equal(h.sqlCalls.filter(c => c.query.startsWith('SELECT')).length,2);
   assert.equal(h.sqlCalls.filter(c => /UPDATE|DELETE|INSERT/.test(c.query)).length,0);
-  assert.equal((await (await h.run()).json()).duplicateLockState,'RESERVED');
   assert.ok(!JSON.stringify(h.logs).includes('TEST_NOT_REAL_SECRET'));
 });
 
@@ -222,9 +223,9 @@ test('unknown state is sanitized rather than echoed to Cloudflare log', async ()
   const h = auditHarness({rows:{
     '2026-10-31T14:00:00Z': {state:'FAKE_PRIVATE_SECRET_DO_NOT_LOG',reserved_at:Date.parse('2026-10-31T14:01:45Z')},
   }});
-  await h.run();
+  const response = await h.run();
   assert.equal(h.logs[0].duplicateLock.state,'UNKNOWN_STATE');
-  assert.equal((await (await h.run()).json()).duplicateLockState,'UNKNOWN_STATE');
+  assert.equal((await response.json()).duplicateLockState,'UNKNOWN_STATE');
   assert.ok(!JSON.stringify(h.logs).includes('FAKE_PRIVATE_SECRET'));
   assert.equal(h.logs[0].previousLock.state,'ABSENT');
 });
@@ -232,10 +233,11 @@ test('unknown state is sanitized rather than echoed to Cloudflare log', async ()
 test('unavailable diagnostic SELECT never bypasses or releases source epoch lock', async () => {
   const h=auditHarness({throwRead:true});
   const response=await h.run();
-  assert.equal((await response.json()).decision,'DUPLICATE_EPOCH_LOCKED');
+  const responseBody=await response.json();
+  assert.equal(responseBody.decision,'DUPLICATE_EPOCH_LOCKED');
+  assert.equal(responseBody.duplicateLockState,'READBACK_UNAVAILABLE');
   assert.equal(h.logs[0].previousLock.state,'READBACK_UNAVAILABLE');
   assert.equal(h.logs[0].duplicateLock.state,'READBACK_UNAVAILABLE');
-  assert.equal((await (await h.run()).json()).duplicateLockState,'READBACK_UNAVAILABLE');
   assert.equal(h.sqlCalls.filter(c => /UPDATE|DELETE|INSERT/.test(c.query)).length,0);
 });
 
