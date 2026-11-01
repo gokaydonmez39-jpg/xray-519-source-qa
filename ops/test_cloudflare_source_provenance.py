@@ -27,14 +27,14 @@ def event_root(trace=TRACE, cron="1 * * * *", outcome="ok",
     }
 
 def event_do(trace=TRACE, run_id=RUN, decision="DISPATCH_ACCEPTED_NOT_SOURCE_PASS",
-             version=VERS, stamp=STAMP, source_mode="dict"):
+             version=VERS, stamp=STAMP, source_mode="dict", stamp_ms=EPOCH_MS+114_251):
     data={"event":"XRAY_PUBLIC_DISPATCH", "stamp":stamp,
           "runId":run_id, "decision":decision}
     if source_mode=="text": source=json.dumps(data)
     elif source_mode=="message": source={"message":json.dumps(data)}
     else: source=data
     return {
-        "timestamp": EPOCH_MS+114_251,
+        "timestamp": stamp_ms,
         "$metadata":{"service":SCRIPT,"type":"cf-worker-log","traceId":trace},
         "$workers":{"scriptName":SCRIPT,"eventType":"fetch",
                     "entrypoint":"SourceDispatchLock","scriptVersion":{"id":version}},
@@ -46,7 +46,7 @@ class ProofTests(unittest.TestCase):
         self.assertEqual(prove([event_root(),event_do()],END), {STAMP:RUN})
     def test_valid_backup_proof(self):
         b=event_root(cron="6 * * * *",stamp_ms=EPOCH_MS+370_250)
-        self.assertEqual(prove([b,event_do()],END), {STAMP:RUN})
+        self.assertEqual(prove([b,event_do(stamp_ms=EPOCH_MS+370_251)],END), {STAMP:RUN})
     def test_serialized_structured_message(self):
         for mode in ("text", "message"):
             self.assertEqual(prove([event_root(),event_do(source_mode=mode)],END),
@@ -60,6 +60,8 @@ class ProofTests(unittest.TestCase):
     def test_wrong_worker_service(self):
         r=event_root();r["$metadata"]["service"]="attacker";
         self.assertEqual(prove([r,event_do()],END),{})
+    def test_same_trace_distant_time_must_not_promote(self):
+        self.assertEqual(prove([event_root(),event_do(stamp_ms=EPOCH_MS+370_251)],END),{})
     def test_wrong_script_version(self):
         self.assertEqual(prove([event_root(),event_do(version="f"*36)],END),{})
     def test_broken_or_unknown_lock_is_not_source_proof(self):
