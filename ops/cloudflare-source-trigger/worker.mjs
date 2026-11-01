@@ -52,8 +52,16 @@ export class SourceDispatchLock extends DurableObject {
         ).toArray();
         return retry.length === 1 && retry[0].epoch === epoch;
       },
-      mark: async (epoch, state) => {
-        const persisted = backupInvocation ? 'BACKUP_' + state : state;
+      mark: async (epoch, state, detail = {}) => {
+        // HTTP 401/403/429 is an authorization/rate-limit HOLD, not a transient
+        // pre-POST lookup failure. Persist that distinction atomically so the
+        // :06 backup cannot retry a blocked GitHub API epoch.
+        const accessRestricted = (
+          state === 'GITHUB_RUNS_UNAVAILABLE' ||
+          state === 'SOURCE_RECEIPT_LOOKUP_UNAVAILABLE'
+        ) && [401, 403, 429].includes(detail.httpStatus);
+        const persisted = accessRestricted ? 'GITHUB_HTTP_ACCESS_BLOCKED'
+          : backupInvocation ? 'BACKUP_' + state : state;
         sql.exec('UPDATE dispatch_epoch SET state=? WHERE epoch=?', persisted, epoch);
       },
       githubFetch: (url, options) => fetch(url, { ...options, redirect: 'manual', signal: AbortSignal.timeout(6000) }),
@@ -72,7 +80,7 @@ export class SourceDispatchLock extends DurableObject {
     ];
     const safeStates = new Set([
       ...knownStates, ...knownStates.map(state => 'BACKUP_' + state),
-      'BACKUP_RESERVED_PREPOST',
+      'BACKUP_RESERVED_PREPOST', 'GITHUB_HTTP_ACCESS_BLOCKED',
     ]);
     function readLock(epoch) {
       try {

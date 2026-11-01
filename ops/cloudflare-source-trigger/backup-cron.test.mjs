@@ -20,11 +20,13 @@ test('primary and secondary Cloudflare cron have distinct times, one UTC source 
   assert.equal(epochOf(hour + 360_000, hour + 450_001).code, 'STALE_OR_EARLY_CRON');
 });
 
-function system({ failFirstStage = false, failNetworkOnce = false, priorState = null, backupStatus = 204 } = {}) {
+function system({ failFirstStage = false, failNetworkOnce = false, priorState = null,
+  backupStatus = 204, initialRunsStatus = 200 } = {}) {
   const rows = new Map();
   if (priorState) rows.set(epoch, { epoch, reserved_at: hour + 61_000, state: priorState });
   const calls = [], sqlCalls = [], logs = [];
-  let nowMs = hour + 66_000, receiptStatus = failFirstStage ? 503 : 404, networkFailed = false;
+  let nowMs = hour + 66_000, receiptStatus = failFirstStage ? 503 : 404,
+    runsStatus = initialRunsStatus, networkFailed = false;
   const sql = {
     exec(statement, ...args) {
       sqlCalls.push({ statement, args });
@@ -69,7 +71,7 @@ function system({ failFirstStage = false, failNetworkOnce = false, priorState = 
   const fetchStub=async(url, options)=>{
     calls.push({url, method:options?.method, redirect:options?.redirect});
     if(url.includes('/contents/')) { if (failNetworkOnce && !networkFailed) { networkFailed = true; throw Error('simulated Cloudflare GET timeout'); } return { status:receiptStatus }; }
-    if(url.includes('/runs?')) return {status:200,json:async()=>({total_count:0,workflow_runs:[]})};
+    if(url.includes('/runs?')) return {status:runsStatus,json:async()=>({total_count:0,workflow_runs:[]})};
     if(url.includes('/dispatches')) return {status:backupStatus,json:async()=>({workflow_run_id:123})};
     throw Error('UNEXPECTED_GITHUB_URL');
   };
@@ -89,7 +91,8 @@ function system({ failFirstStage = false, failNetworkOnce = false, priorState = 
     const res=await obj.fetch(req);
     return (await res.json()).decision;
   }
-  return {invoke,rows,calls,sqlCalls,logs,setReceiptStatus:s=>{receiptStatus=s;}};
+  return {invoke,rows,calls,sqlCalls,logs,
+    setReceiptStatus:s=>{receiptStatus=s;},setRunsStatus:s=>{runsStatus=s;}};
 }
 
 test('no original epoch reservation: secondary trigger may dispatch once', async()=>{
@@ -123,6 +126,45 @@ for (const previous of ['RESERVED','DISPATCH_REJECTED','GITHUB_NETWORK_OR_RESPON
     assert.equal(t.calls.filter(c=>c.method==='POST').length,0);
   });
 }
+
+
+for (const httpStatus of [401, 403, 429]) {
+  test('GitHub runs HTTP '+httpStatus+' blocks backup CAS, no repeated GET or POST', async () => {
+    const t = system({initialRunsStatus:httpStatus});
+    assert.equal(await t.invoke(60_000), 'GITHUB_RUNS_UNAVAILABLE');
+    assert.equal(t.rows.get(epoch).state, 'GITHUB_HTTP_ACCESS_BLOCKED');
+    assert.equal(t.rows.get(epoch).reserved_at, hour + 61_000);
+    const before = t.calls.length;
+    t.setRunsStatus(200); // Even recovery later must not reset the immutable lock.
+    assert.equal(await t.invoke(360_000), 'DUPLICATE_EPOCH_LOCKED');
+    assert.equal(t.calls.length, before, 'blocked backup cannot repeat a GitHub call');
+    assert.equal(t.calls.filter(x=>x.method==='POST').length, 0);
+    assert.equal(t.sqlCalls.some(x=>/DELETE|DROP TABLE|UPDATE dispatch_epoch SET reserved_at/.test(x.statement)),false);
+    assert.equal(t.logs.at(-1).duplicateLock.state, 'GITHUB_HTTP_ACCESS_BLOCKED');
+  });
+}
+
+test('unauthenticated public receipt HTTP 403 also blocks backup, no source dispatch', async () => {
+  const t = system();
+  t.setReceiptStatus(403);
+  assert.equal(await t.invoke(60_000), 'SOURCE_RECEIPT_LOOKUP_UNAVAILABLE');
+  assert.equal(t.rows.get(epoch).state, 'GITHUB_HTTP_ACCESS_BLOCKED');
+  const previousCalls = t.calls.length;
+  assert.equal(await t.invoke(360_000), 'DUPLICATE_EPOCH_LOCKED');
+  assert.equal(t.calls.length, previousCalls);
+  assert.equal(t.calls.filter(x=>x.method==='POST').length, 0);
+});
+
+test('transient GitHub runs HTTP 503 still permits one safe :06 CAS recovery', async () => {
+  const t = system({initialRunsStatus:503});
+  assert.equal(await t.invoke(60_000), 'GITHUB_RUNS_UNAVAILABLE');
+  assert.equal(t.rows.get(epoch).state, 'GITHUB_RUNS_UNAVAILABLE');
+  t.setRunsStatus(200);
+  assert.equal(await t.invoke(360_000), 'DISPATCH_ACCEPTED_NOT_SOURCE_PASS');
+  assert.equal(t.rows.get(epoch).state,'BACKUP_DISPATCH_ACCEPTED_NOT_SOURCE_PASS');
+  assert.equal(t.calls.filter(x=>x.method==='POST').length, 1);
+  assert.equal(t.rows.get(epoch).reserved_at, hour + 61_000);
+});
 
 test('backup GET failure is retained as terminal backup error: no third attempt',async()=>{
   const t=system({priorState:'SOURCE_RECEIPT_LOOKUP_UNAVAILABLE',failFirstStage:true});
