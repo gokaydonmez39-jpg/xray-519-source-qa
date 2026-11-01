@@ -49,7 +49,7 @@ def query_body(end_stamp):
         "chart": False,
         "limit": MAX_EVENTS,
         "parameters": {
-            "datasets": ["cloudflare-workers"],
+            "datasets": [],  # Query all datasets; exact service filter applied.
             "filterCombination": "and",
             "filters": [
                 {"key": "$metadata.service", "operation": "eq",
@@ -139,7 +139,7 @@ def prove(events, end_stamp):
             continue
         if worker.get("entrypoint") != "SourceDispatchLock" or worker.get("eventType") != "fetch":
             continue
-        if meta.get("type") != "cf-worker-log":
+        if meta.get("type") != "cf-worker":
             continue
         trace = meta.get("traceId")
         root = roots.get(trace, set())
@@ -172,6 +172,9 @@ def from_query_response(payload, end_stamp):
     result = payload.get("result")
     if not isinstance(result, dict):
         raise ProvenanceError("CLOUDFLARE_QUERY_INVALID")
+    run = result.get("run")
+    if not isinstance(run, dict) or run.get("status") != "COMPLETED":
+        raise ProvenanceError("CLOUDFLARE_QUERY_NOT_COMPLETED")
     events_obj = result.get("events")
     if not isinstance(events_obj, dict):
         raise ProvenanceError("CLOUDFLARE_QUERY_NO_EVENTS")
@@ -230,7 +233,7 @@ def summarize_invocations(events, end_stamp):
             cron=(w.get("event") or {}).get("cron")
             if cron in ALLOWED_CRONS:
                 group["root"].append({"cron":cron,"outcome":w.get("outcome"),"timestamp":at})
-        elif m.get("type")=="cf-worker-log":
+        elif m.get("type")=="cf-worker":
             p=_log_payload(e)
             if isinstance(p,dict):
                 group["logs"].append(p)
