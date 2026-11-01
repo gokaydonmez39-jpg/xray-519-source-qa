@@ -97,7 +97,7 @@ export async function executeOnce({ scheduledTime, nowMs, token, reserve, mark, 
   // exact transition to POST makes subsequent network outcomes ambiguous.
   let dispatchPostAttempted = false;
   try {
-    const receipt = await preDispatchGet(receiptUrl, { method: 'GET', headers: headers() });
+    const receipt = await preDispatchGet(receiptUrl, { method: 'GET', headers: headers(token) });
     if (receipt.status === 200) return await state('EXISTING_SOURCE_RECEIPT');
     if (receipt.status !== 404) return await state('SOURCE_RECEIPT_LOOKUP_UNAVAILABLE', { httpStatus: receipt.status });
 
