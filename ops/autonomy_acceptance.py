@@ -13,10 +13,11 @@ import re
 STAMP_RE = re.compile(r"^[0-9]{8}T[0-9]{2}00Z$")
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 PROVENANCE_EVENTS = {
+    # Only the independently collected origins that the trusted evidence
+    # collector actually emits. Legacy caller-supplied labels must never
+    # bypass the exact Cloudflare trace -> GitHub run-id attestation.
     "github_native_schedule": "schedule",
-    "cloudflare_primary": "workflow_dispatch",
-    "cloudflare_backup": "workflow_dispatch",
-    "github_source_kick": "push",
+    "cloudflare_cron_trace_exact_run": "workflow_dispatch",
 }
 REQUIRED_HOURS = 48
 SOURCE_ONLY_STATUS = "SOURCE_ONLY_OFFLINE_ELIGIBILITY_NOT_LIVE_ACCEPTANCE"
