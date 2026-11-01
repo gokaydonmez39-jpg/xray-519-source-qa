@@ -35,7 +35,7 @@ def event_do(trace=TRACE, run_id=RUN, decision="DISPATCH_ACCEPTED_NOT_SOURCE_PAS
     else: source=data
     return {
         "timestamp": stamp_ms,
-        "$metadata":{"service":SCRIPT,"type":"cf-worker-log","traceId":trace},
+        "$metadata":{"service":SCRIPT,"type":"cf-worker","traceId":trace},
         "$workers":{"scriptName":SCRIPT,"eventType":"fetch",
                     "entrypoint":"SourceDispatchLock","scriptVersion":{"id":version}},
         "source":source
@@ -137,6 +137,10 @@ class ProofTests(unittest.TestCase):
         for mode in ("text", "message"):
             self.assertEqual(prove([event_root(),event_do(source_mode=mode)],END),
                              {STAMP:RUN})
+    def test_wrong_worker_log_type_must_not_promote(self):
+        d=event_do(); d["$metadata"]["type"]="cf-worker-log"
+        self.assertEqual(prove([event_root(),d],END),{})
+
     def test_no_scheduled_parent(self):
         self.assertEqual(prove([event_do()],END), {})
     def test_bad_trace(self):
@@ -181,13 +185,18 @@ class ProofTests(unittest.TestCase):
         self.assertEqual(p["timeframe"]["to"]-p["timeframe"]["from"],
                          47*3600_000+10*60_000)
     def test_query_success_and_complete(self):
-        self.assertEqual(from_query_response({"success":True,"result":{
+        self.assertEqual(from_query_response({"success":True,"result":{"run":{"status":"COMPLETED"},
             "events":{"count":2,"events":[event_root(),event_do()]}}},END),{STAMP:RUN})
     def test_query_truncated_fails_closed(self):
         for count in (1, MAX_EVENTS):
             with self.assertRaises(ProvenanceError):
                 from_query_response({"success":True,"result":{
                     "events":{"count":count,"events":[event_root(),event_do()]}}},END)
+    def test_running_query_is_hold(self):
+        with self.assertRaises(ProvenanceError):
+            from_query_response({"success":True,"result":{"run":{"status":"STARTED"},
+                "events":{"count":2,"events":[event_root(),event_do()]}}},END)
+
     def test_query_failure_fails_closed(self):
         for payload in ({}, {"success":False}, {"success":True,"result":{}}):
             with self.assertRaises(ProvenanceError):from_query_response(payload,END)
@@ -213,7 +222,7 @@ class ProofTests(unittest.TestCase):
         def stub(req,timeout):
             called.append((req.get_method(),req.full_url,
                            req.data.decode(),timeout,req.headers))
-            return Reply(json.dumps({"success":True,"result":{"events":{
+            return Reply(json.dumps({"success":True,"result":{"run":{"status":"COMPLETED"},"events":{
                 "count":2,"events":[event_root(),event_do()]}}}).encode())
         proof=fetch_verified(END,"a"*32,token,transport=stub)
         self.assertEqual(proof,{STAMP:RUN})
