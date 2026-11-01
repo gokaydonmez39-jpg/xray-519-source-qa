@@ -1,4 +1,5 @@
 // XRAY-519 PUBLIC SOURCE TRIGGER ONLY. No trading, private repo, source strategy or billing changes.
+import { classifyDecision, mayRetryReadOnlyGet } from './self-heal-policy.mjs';
 export const CONFIG = Object.freeze({
   repository: 'gokaydonmez39-jpg/xray-519-source-qa',
   workflowId: 402070622,
@@ -50,7 +51,8 @@ function headers(token) {
 }
 
 function out(decision, stamp, extra = {}) {
-  return { decision, stamp, ...extra };
+  const result = { decision, stamp, ...extra };
+  return { ...result, selfHeal: classifyDecision(result) };
 }
 
 // Runtime must provide a Durable Object SQLite-backed INSERT-OR-IGNORE reserve function.
@@ -72,15 +74,30 @@ export async function executeOnce({ scheduledTime, nowMs, token, reserve, mark, 
   async function state(code, extra = {}) {
     try { await mark(time.epoch, code); }
     catch { return out('POST_RESERVATION_AUDIT_FAILURE', time.stamp, { priorDecision: code }); }
-    return out(code, time.stamp, extra);
+    return out(code, time.stamp, { ...extra, attempt: isBackup ? 'backup' : 'primary', safeGetRetryUsed });
   }
+  // An additional GitHub GET is safe only before any dispatch POST, only for
+  // 502/503/504, once across the *whole* UTC epoch, within the original 90s
+  // nominal Cron freshness window. Never retry 403/429 or POST outcomes.
+  let safeGetRetryUsed = false;
+  const nominalOffset = isBackup ? CONFIG.backupOffsetMs : CONFIG.offsetMs;
+  async function preDispatchGet(url, options) {
+    const first = await githubFetch(url, options);
+    const ageMs = Date.now() - (time.startMs + nominalOffset);
+    if (!mayRetryReadOnlyGet({
+      status: first.status, used: safeGetRetryUsed, nominalAgeMs: ageMs,
+    })) return first;
+    safeGetRetryUsed = true;
+    return await githubFetch(url, options);
+  }
+
   const receiptPath = `receipts/${time.dir}/${time.stamp}-n519.json.gz`;
   const receiptUrl = `${API}/contents/${receiptPath}?ref=main`;
   // Network failures during GET can never have dispatched a run. Only the
   // exact transition to POST makes subsequent network outcomes ambiguous.
   let dispatchPostAttempted = false;
   try {
-    const receipt = await githubFetch(receiptUrl, { method: 'GET', headers: headers() });
+    const receipt = await preDispatchGet(receiptUrl, { method: 'GET', headers: headers() });
     if (receipt.status === 200) return await state('EXISTING_SOURCE_RECEIPT');
     if (receipt.status !== 404) return await state('SOURCE_RECEIPT_LOOKUP_UNAVAILABLE', { httpStatus: receipt.status });
 
@@ -95,7 +112,7 @@ export async function executeOnce({ scheduledTime, nowMs, token, reserve, mark, 
     for (const query of queries) {
       const params = new URLSearchParams({ branch: 'main', per_page: '1', ...query });
       const listUrl = `${API}/actions/workflows/${CONFIG.workflowFile}/runs?${params}`;
-      const runs = await githubFetch(listUrl, { method: 'GET', headers: headers(token) });
+      const runs = await preDispatchGet(listUrl, { method: 'GET', headers: headers(token) });
       if (runs.status !== 200) return await state('GITHUB_RUNS_UNAVAILABLE', { httpStatus: runs.status });
       const data = await runs.json();
       if (!data || !Number.isSafeInteger(data.total_count) || data.total_count < 0 ||
