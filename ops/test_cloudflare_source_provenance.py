@@ -41,6 +41,32 @@ def event_do(trace=TRACE, run_id=RUN, decision="DISPATCH_ACCEPTED_NOT_SOURCE_PAS
         "source":source
     }
 
+class CloudflareFullWindowReportSafety(unittest.TestCase):
+    def record(self, origin="cloudflare_cron_trace_exact_run", verified=True):
+        return {"trigger_provenance":origin,
+                "trigger_independently_verified":verified}
+
+    def test_one_cloudflare_hour_does_not_claim_48h_log_complete(self):
+        from ops.evidence_collector import _cloudflare_window_accepted
+        self.assertFalse(_cloudflare_window_accepted([self.record()],1))
+    def test_47_cloudflare_hours_do_not_claim_complete(self):
+        from ops.evidence_collector import _cloudflare_window_accepted
+        self.assertFalse(_cloudflare_window_accepted([self.record() for _ in range(47)],47))
+    def test_exactly_48_valid_hours_with_cf_and_native_origin(self):
+        from ops.evidence_collector import _cloudflare_window_accepted
+        records=[self.record()]+[self.record("github_native_schedule") for _ in range(47)]
+        self.assertTrue(_cloudflare_window_accepted(records,48))
+    def test_mismatched_or_incomplete_origin_forces_hold(self):
+        from ops.evidence_collector import _cloudflare_window_accepted
+        good=[self.record() for _ in range(48)]
+        self.assertFalse(_cloudflare_window_accepted(good,47))
+        good[-1]["trigger_independently_verified"]=False
+        self.assertFalse(_cloudflare_window_accepted(good,48))
+    def test_48_native_only_does_not_claim_cloudflare_verification(self):
+        from ops.evidence_collector import _cloudflare_window_accepted
+        good=[self.record("github_native_schedule") for _ in range(48)]
+        self.assertFalse(_cloudflare_window_accepted(good,48))
+
 class CloudflareProvenanceAdmissionRegression(unittest.TestCase):
     def _valid_record(self, provenance):
         return {
