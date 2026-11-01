@@ -95,7 +95,7 @@ export async function executeOnce({ scheduledTime, nowMs, token, reserve, mark, 
     for (const query of queries) {
       const params = new URLSearchParams({ branch: 'main', per_page: '1', ...query });
       const listUrl = `${API}/actions/workflows/${CONFIG.workflowFile}/runs?${params}`;
-      const runs = await githubFetch(listUrl, { method: 'GET', headers: headers() });
+      const runs = await githubFetch(listUrl, { method: 'GET', headers: headers(token) });
       if (runs.status !== 200) return await state('GITHUB_RUNS_UNAVAILABLE', { httpStatus: runs.status });
       const data = await runs.json();
       if (!data || !Number.isSafeInteger(data.total_count) || data.total_count < 0 ||

@@ -37,6 +37,44 @@ test('exactly one public Github workflow dispatch',async()=>{
   assert.deepEqual(JSON.parse(post[0].body),{ref:'main',inputs:{max_markets:'519'}});
   assert.ok(!JSON.stringify(t.calls).includes('xray-crypto-godzilla-omega'));
 });
+test('GitHub workflow-run list GET is authenticated; anonymous 403 cannot block a healthy token',async()=>{
+  const t=mock();
+  const baseFetch=t.arg.githubFetch;
+  const expectedAuth='Bearer '+t.arg.token;
+  // Exact regression: old code sends no Authorization and receives HTTP 403.
+  t.arg.githubFetch=async(url,opts)=>{
+    if(url.includes('/actions/workflows/')&&url.includes('/runs?')&&
+       opts.headers.Authorization!==expectedAuth)return {status:403};
+    return baseFetch(url,opts);
+  };
+  const result=await t.run();
+  assert.equal(result.decision,'DISPATCH_ACCEPTED_NOT_SOURCE_PASS');
+  const listCalls=t.calls.filter(c=>c.url.includes('/runs?'));
+  assert.equal(listCalls.length,6);
+  assert.ok(listCalls.every(c=>c.method==='GET'&&c.headers.Authorization===expectedAuth));
+  const receipt=t.calls.find(c=>c.url.includes('/contents/'));
+  assert.equal(receipt.headers.Authorization,undefined,'leave existing public receipt GET unchanged');
+  assert.equal(t.calls.filter(c=>c.method==='POST').length,1);
+  assert.equal(JSON.stringify(result).includes(t.arg.token),false,'token must never be in results');
+  assert.equal([...t.status.values()][0],'DISPATCH_ACCEPTED_NOT_SOURCE_PASS');
+});
+
+test('authenticated HTTP 403 workflow-run list remains fail-closed without a dispatch',async()=>{
+  const t=mock({listStatus:403});
+  const first=await t.run();
+  assert.equal(first.decision,'GITHUB_RUNS_UNAVAILABLE');
+  assert.equal(first.httpStatus,403);
+  assert.equal(first.stamp,'20261031T0800Z');
+  const list=t.calls.filter(c=>c.url.includes('/runs?'));
+  assert.equal(list.length,1);
+  assert.equal(list[0].headers.Authorization,'Bearer '+t.arg.token);
+  assert.equal(t.calls.filter(c=>c.method==='POST').length,0);
+  assert.equal(JSON.stringify(first).includes(t.arg.token),false);
+  const before=t.calls.length;
+  assert.equal((await t.run()).decision,'DUPLICATE_EPOCH_LOCKED');
+  assert.equal(t.calls.length,before,'do not retry a locked epoch in core');
+});
+
 test('existing receipt skips',async()=>{const t=mock({receipt:200});assert.equal((await t.run()).decision,'EXISTING_SOURCE_RECEIPT');assert.equal(t.calls.filter(x=>x.method==='POST').length,0)});
 test('existing workflow run same hour skips',async()=>{const t=mock({runs:[{workflow_id:CONFIG.workflowId,head_branch:'main',created_at:new Date(hour).toISOString(),status:'completed',id:32}]});assert.equal((await t.run()).decision,'EXISTING_SOURCE_RUN')});
 test('prior active run skips',async()=>{const t=mock({runs:[{workflow_id:CONFIG.workflowId,head_branch:'main',created_at:new Date(hour-3_600_000).toISOString(),status:'in_progress',id:33}]});assert.equal((await t.run()).decision,'SOURCE_RUN_ALREADY_ACTIVE')});
