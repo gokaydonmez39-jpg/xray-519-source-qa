@@ -139,7 +139,7 @@ def prove(events, end_stamp):
             continue
         if worker.get("entrypoint") != "SourceDispatchLock" or worker.get("eventType") != "fetch":
             continue
-        if meta.get("type") != "cf-worker":
+        if meta.get("type") not in ("cf-worker", "cf-worker-log"):
             continue
         trace = meta.get("traceId")
         root = roots.get(trace, set())
@@ -233,7 +233,7 @@ def summarize_invocations(events, end_stamp):
             cron=(w.get("event") or {}).get("cron")
             if cron in ALLOWED_CRONS:
                 group["root"].append({"cron":cron,"outcome":w.get("outcome"),"timestamp":at})
-        elif m.get("type")=="cf-worker":
+        elif m.get("type") in ("cf-worker", "cf-worker-log"):
             p=_log_payload(e)
             if isinstance(p,dict):
                 group["logs"].append(p)
