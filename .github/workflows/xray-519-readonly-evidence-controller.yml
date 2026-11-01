@@ -84,12 +84,12 @@ jobs:
           current = report["diagnostics"].get(stamp, [])
           with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a",encoding="utf-8") as out:
               out.write("## XRAY-519 public read-only evidence control\n\n")
-              out.write(f"- UTC epoch inspected: \`{stamp}\`\n")
-              out.write(f"- Raw receipt+bridge and GitHub run pairs: \`{report['pair_and_run_verified_count']}/48\`\n")
-              out.write(f"- Trusted-origin source epochs: \`{report['fully_qualified_source_hours']}/48\`\n")
-              out.write(f"- Public acceptance (conditional): \`{report['conditional_public_gate_pass']}\`\n")
+              out.write(f"- UTC epoch inspected: `{stamp}`\n")
+              out.write(f"- Raw receipt+bridge and GitHub run pairs: `{report['pair_and_run_verified_count']}/48`\n")
+              out.write(f"- Trusted-origin source epochs: `{report['fully_qualified_source_hours']}/48`\n")
+              out.write(f"- Public acceptance (conditional): `{report['conditional_public_gate_pass']}`\n")
               out.write("- FULL FINAL START: **HOLD** (private/WSS/OOS/phone unverified)\n")
-              out.write(f"- Current epoch diagnostic codes: \`{','.join(current) if current else 'NONE'}\`\n")
+              out.write(f"- Current epoch diagnostic codes: `{','.join(current) if current else 'NONE'}`\n")
               out.write("- No market requests, no source trigger, no orders, no lock changes.\n")
           if current:
               print("::warning title=XRAY source-origin/evidence HOLD::" +
