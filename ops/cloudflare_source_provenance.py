@@ -269,7 +269,7 @@ def summarize_invocations(events, end_stamp):
         "unclassified_holds":statuses.count("UNKNOWN"),
     }
 
-def fetch_verified(end_stamp, account_id, token, transport=None):
+def fetch_verified(end_stamp, account_id, token, transport=None, include_summary=False):
     """Only POST query, never write Worker code, data, schedules or secrets.
 
     Token and response bodies are never included in failures or printed.
@@ -300,4 +300,7 @@ def fetch_verified(end_stamp, account_id, token, transport=None):
         if isinstance(exc, ProvenanceError):
             raise
         raise ProvenanceError("CLOUDFLARE_QUERY_TRANSPORT_FAILED") from None
-    return from_query_response(payload, end_stamp)
+    proof = from_query_response(payload, end_stamp)
+    if include_summary:
+        return proof, summarize_invocations(payload["result"]["events"]["events"], end_stamp)
+    return proof
