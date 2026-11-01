@@ -218,15 +218,19 @@ class LiveInputAdmissionTests(unittest.TestCase):
             "private_strategy_evaluated":0,"live_al_claim":False,
             "receipt_sha256":"a"*64,"bridge_sha256":"b"*64,
         },run())}
-        with patch.object(c,"read_pair",return_value={k:v for k,v in good.items() if k not in (
+        def read_current_only(root, stamp):
+            if stamp != STAMP:
+                raise c.EvidenceError("MISSING_OR_UNSAFE_PAIR")
+            return {k:v for k,v in good.items() if k not in (
                 "event","trigger_provenance","trigger_independently_verified",
                 "conclusion","kind","pair_bytes_independently_verified",
-                "pair_canonical_independently_verified")}) as reader:
+                "pair_canonical_independently_verified")}
+        with patch.object(c,"read_pair",side_effect=read_current_only) as reader:
             x=c.collect(".",STAMP,lambda rid:run())
         self.assertEqual(x["fully_qualified_source_hours"],1)
         self.assertFalse(x["conditional_public_gate_pass"])
         self.assertFalse(x["full_final_start"])
-        self.assertEqual(len(x["diagnostics"]),0)
+        self.assertEqual(len(x["diagnostics"]),47)
         self.assertEqual(reader.call_count,48)
 
     def test_48_synthetic_native_source_hours_conditional_only(self):
