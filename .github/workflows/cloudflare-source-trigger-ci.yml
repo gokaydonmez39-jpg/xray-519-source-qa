@@ -4,10 +4,16 @@ on:
     branches: [feature-519-cloudflare-source-trigger-20261031]
     paths:
       - 'ops/cloudflare-source-trigger/**'
+      - 'ops/cloudflare_source_provenance.py'
+      - 'ops/test_cloudflare_source_provenance.py'
+      - 'ops/evidence_collector.py'
       - '.github/workflows/cloudflare-source-trigger-ci.yml'
   pull_request:
     paths:
       - 'ops/cloudflare-source-trigger/**'
+      - 'ops/cloudflare_source_provenance.py'
+      - 'ops/test_cloudflare_source_provenance.py'
+      - 'ops/evidence_collector.py'
       - '.github/workflows/cloudflare-source-trigger-ci.yml'
 permissions:
   contents: read
@@ -26,6 +32,7 @@ jobs:
           node --check ops/cloudflare-source-trigger/dispatch-core.mjs
           node --check ops/cloudflare-source-trigger/worker.mjs
           node --test ops/cloudflare-source-trigger/*.test.mjs
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest ops.test_cloudflare_source_provenance
       - name: Audit no external deployment
         run: |
           set -euo pipefail
