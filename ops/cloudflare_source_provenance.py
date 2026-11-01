@@ -128,7 +128,7 @@ def prove(events, end_stamp):
             continue
         epoch = datetime.fromtimestamp(hour_ms/1000,timezone.utc).strftime("%Y%m%dT%H00Z")
         # A trace may only bind to one scheduled invocation.
-        roots.setdefault(trace, set()).add((epoch, version))
+        roots.setdefault(trace, set()).add((epoch, version, stamp_ms))
     candidates = {}
     conflicts = set()
     for ev in events:
@@ -154,7 +154,9 @@ def prove(events, end_stamp):
         if type(run_id) is not int or run_id <= 0:
             continue
         version = _version(ev)
-        if not version or (stamp, version) not in root:
+        if not version or not any(ep == stamp and ver == version and
+                abs(stamp_ms - ev["timestamp"]) <= 60_000
+                for ep, ver, stamp_ms in root):
             continue
         if stamp in candidates and candidates[stamp] != run_id:
             conflicts.add(stamp)
