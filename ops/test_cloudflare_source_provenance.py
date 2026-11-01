@@ -41,6 +41,36 @@ def event_do(trace=TRACE, run_id=RUN, decision="DISPATCH_ACCEPTED_NOT_SOURCE_PAS
         "source":source
     }
 
+class CloudflareProvenanceAdmissionRegression(unittest.TestCase):
+    def _valid_record(self, provenance):
+        return {
+            "kind":"SOURCE", "stamp":STAMP, "run_id":RUN, "receipt_runner_id":str(RUN),
+            "trigger_provenance":provenance, "event":"workflow_dispatch",
+            "trigger_independently_verified":True,
+            "conclusion":"success","source_qa_success":True,
+            "scanned":519,"pass":489,"warmup":30,"failed":0,
+            "status_accounting_ok":True,
+            "orders_sent":0,"notifications_sent":0,"private_strategy_evaluated":0,
+            "live_al_claim":False,
+            "pair_bytes_independently_verified":True,
+            "pair_canonical_independently_verified":True,
+            "receipt_sha256":"a"*64,"bridge_sha256":"b"*64
+        }
+    def test_cloudflare_trace_exact_run_is_countable_only_after_all_safety_checks(self):
+        from ops.autonomy_acceptance import _source_failures
+        good=self._valid_record("cloudflare_cron_trace_exact_run")
+        self.assertEqual(_source_failures(good),[])
+        wrong=dict(good,trigger_independently_verified=False)
+        self.assertIn("TRIGGER_PROVENANCE_UNVERIFIED",_source_failures(wrong))
+        wrong=dict(good,event="push")
+        self.assertIn("TRIGGER_PROVENANCE_UNVERIFIED",_source_failures(wrong))
+    def test_origin_typo_and_legacy_unproved_origin_rejected(self):
+        from ops.autonomy_acceptance import _source_failures
+        for origin in ("unknown_external_origin", "cloudflare_primary",
+                       "cloudflare_cro_trace_exact_run", ""):
+            record=self._valid_record(origin)
+            self.assertIn("TRIGGER_PROVENANCE_UNVERIFIED",_source_failures(record))
+
 class EvidenceCollectorIntegrationTests(unittest.TestCase):
     def _case(self, event="workflow_dispatch"):
         from ops.evidence_collector import WORKFLOW_ID, WORKFLOW_NAME, REPO
@@ -137,8 +167,15 @@ class ProofTests(unittest.TestCase):
         for mode in ("text", "message"):
             self.assertEqual(prove([event_root(),event_do(source_mode=mode)],END),
                              {STAMP:RUN})
-    def test_wrong_worker_log_type_must_not_promote(self):
-        d=event_do(); d["$metadata"]["type"]="cf-worker-log"
+    def test_documented_and_observed_cloudflare_log_type_both_strictly_verified(self):
+        for log_type in ("cf-worker", "cf-worker-log"):
+            with self.subTest(type=log_type):
+                d=event_do()
+                d["$metadata"]["type"]=log_type
+                self.assertEqual(prove([event_root(),d],END),{STAMP:RUN})
+        d=event_do();d["$metadata"]["type"]="cf-worker-event"
+        self.assertEqual(prove([event_root(),d],END),{})
+        d=event_do();d["$metadata"]["type"]="untrusted"
         self.assertEqual(prove([event_root(),d],END),{})
 
     def test_no_scheduled_parent(self):

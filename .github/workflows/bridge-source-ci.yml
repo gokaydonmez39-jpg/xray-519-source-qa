@@ -4,6 +4,10 @@ on:
     paths:
       - "*.py"
       - "tests/**"
+      - "ops/autonomy_acceptance.py"
+      - "ops/evidence_collector.py"
+      - "ops/cloudflare_source_provenance.py"
+      - "ops/test_cloudflare_source_provenance.py"
       - ".github/workflows/**"
       - "PUBLIC_PACKAGE_SHA256_MANIFEST.json"
   push:
@@ -30,6 +34,7 @@ jobs:
           set -euo pipefail
           python3 -m unittest discover -s tests -q
           python3 -O -m unittest discover -s tests -q
+          python3 -m unittest ops.test_cloudflare_source_provenance -q
       - name: Confirm no trade endpoint was introduced
         run: |
           set -euo pipefail
