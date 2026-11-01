@@ -38,9 +38,15 @@ def evidence(stamp=STAMP):
                           "run_id": "12345", "run_attempt": "1"},
         "results": rows,
     }
+    # Model the real public publisher: the bridge signs the original
+    # canonical research JSON before runner/wrapper fields are appended.
+    original = {key: value for key, value in receipt.items()
+                if key != "public_runner"}
+    source_digest = hashlib.sha256(canon(original)).hexdigest()
+    receipt["source_receipt_sha256"] = source_digest
     bridge = {
         "schema": "XRAY_PUBLIC_PRIVATE_CLOSED_BAR_BRIDGE_V1",
-        "source_receipt_sha256": hashlib.sha256(canon(receipt)).hexdigest(),
+        "source_receipt_sha256": source_digest,
         "source_receipt_key": receipt["receipt_key"],
         "scope_digest_sha256": receipt["scope_digest_sha256"],
         "utc_closed_epoch_1h_ms": epoch, "identity_universe": 519,
@@ -141,6 +147,34 @@ class SourcePreflightTests(unittest.TestCase):
         self.advance({self.receipt: a, self.bridge: gzip.compress(canon(doc), mtime=0)})
         with self.assertRaisesRegex(p.PreflightBlocked, "PAIR_HASH_MISMATCH"):
             self.check()
+
+    def test_tampered_published_wrapper_hash_is_blocked(self):
+        receipt_gz, bridge_gz = evidence()
+        doc = json.loads(gzip.decompress(receipt_gz))
+        doc["source_receipt_sha256"] = "0" * 64
+        tampered = gzip.compress(canon(doc), mtime=0)
+        self.advance({self.receipt: tampered, self.bridge: bridge_gz})
+        with self.assertRaisesRegex(p.PreflightBlocked, "PAIR_HASH_MISMATCH"):
+            self.check()
+
+    def test_tampered_original_receipt_body_is_blocked(self):
+        receipt_gz, bridge_gz = evidence()
+        doc = json.loads(gzip.decompress(receipt_gz))
+        doc["scope_digest_sha256"] = "b" * 64
+        tampered = gzip.compress(canon(doc), mtime=0)
+        self.advance({self.receipt: tampered, self.bridge: bridge_gz})
+        with self.assertRaisesRegex(p.PreflightBlocked, "PAIR_HASH_MISMATCH"):
+            self.check()
+
+    def test_published_wrapper_hash_matches_original(self):
+        receipt_gz, bridge_gz = evidence()
+        receipt = json.loads(gzip.decompress(receipt_gz))
+        bridge = json.loads(gzip.decompress(bridge_gz))
+        original = {k: val for k, val in receipt.items()
+                    if k not in ("public_runner", "source_receipt_sha256")}
+        expected = hashlib.sha256(canon(original)).hexdigest()
+        self.assertEqual(receipt["source_receipt_sha256"], expected)
+        self.assertEqual(bridge["source_receipt_sha256"], expected)
 
     def test_non_519_stale_head_still_blocks(self):
         a, b = evidence()

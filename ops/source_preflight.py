@@ -147,7 +147,13 @@ def _pair(ref, entries, mode, stamp):
         receipt.get("complete_identity_scope") is not True or
         receipt.get("status_accounting_ok") is not True):
         raise PreflightBlocked("INVALID_PUBLISHED_EVIDENCE")
-    digest = hashlib.sha256(_canonical(receipt)).hexdigest()
+    # The bridge hashes the original research JSON, before public publication
+    # adds the run provenance and source_receipt_sha256 wrapper fields.
+    unwrapped = {key: value for key, value in receipt.items()
+                 if key not in ("public_runner", "source_receipt_sha256")}
+    digest = hashlib.sha256(_canonical(unwrapped)).hexdigest()
+    if receipt.get("source_receipt_sha256") != digest:
+        raise PreflightBlocked("PAIR_HASH_MISMATCH")
     if (bridge.get("schema") != "XRAY_PUBLIC_PRIVATE_CLOSED_BAR_BRIDGE_V1" or
         bridge.get("source_receipt_sha256") != digest or
         bridge.get("source_receipt_key") != receipt.get("receipt_key") or
