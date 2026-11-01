@@ -1,0 +1,105 @@
+name: XRAY 519 read-only evidence controller
+
+# Diagnostic control plane: never schedules a Binance scan, dispatches a
+# GitHub source job, modifies a receipt, deploys Cloudflare, or runs P30.
+on:
+  workflow_run:
+    workflows:
+      - XRAY 519 public Spot closed-bar research
+    types: [completed]
+  schedule:
+    - cron: '17 * * * *'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: xray-519-public-evidence-controller
+  cancel-in-progress: false
+
+jobs:
+  readonly-evidence-audit:
+    if: >-
+      github.repository == 'gokaydonmez39-jpg/xray-519-source-qa' &&
+      github.event.repository.private == false &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_run' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name ==
+          'gokaydonmez39-jpg/xray-519-source-qa'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout only trusted public main code (no persisted credentials)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: main
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Independent UTC source pair and GitHub metadata readback
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          XRAY_EVENT_NAME: ${{ github.event_name }}
+          XRAY_EVENT_PATH: ${{ github.event_path }}
+          PYTHONDONTWRITEBYTECODE: '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          from datetime import datetime, timezone, timedelta
+          from pathlib import Path
+          from ops.evidence_collector import collect, fetch_github_run
+
+          event = os.environ.get("XRAY_EVENT_NAME", "")
+          now = datetime.now(timezone.utc)
+          if event == "workflow_run":
+              payload = json.loads(Path(os.environ["XRAY_EVENT_PATH"]).read_text())
+              run = payload.get("workflow_run") or {}
+              # This URL-independent value is supplied by trusted GitHub
+              # event metadata. The collector still independently fetches
+              # the matching exact run and validates UTC timestamp.
+              started = datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
+              end = started.replace(minute=0,second=0,microsecond=0)
+          elif event == "schedule":
+              # A delayed GitHub schedule is best effort. When it runs in
+              # the first 15 minutes of an hour, inspect the PREVIOUS
+              # completed source epoch rather than generating a false gap.
+              end = now.replace(minute=0,second=0,microsecond=0)
+              if now.minute < 15:
+                  end -= timedelta(hours=1)
+          else:
+              print("EVIDENCE_UNEXPECTED_TRIGGER")
+              sys.exit(2)
+          stamp = end.strftime("%Y%m%dT%H00Z")
+          token = os.environ.get("GITHUB_TOKEN", "")
+          report = collect(Path("."), stamp,
+                           lambda rid: fetch_github_run(rid, token))
+          print("XRAY519_EVIDENCE_CONTROLLER_REPORT=" +
+                json.dumps(report,sort_keys=True,separators=(",",":")))
+          current = report["diagnostics"].get(stamp, [])
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a",encoding="utf-8") as out:
+              out.write("## XRAY-519 public read-only evidence control\n\n")
+              out.write(f"- UTC epoch inspected: `{stamp}`\n")
+              out.write(f"- Raw receipt+bridge and GitHub run pairs: `{report['pair_and_run_verified_count']}/48`\n")
+              out.write(f"- Trusted-origin source epochs: `{report['fully_qualified_source_hours']}/48`\n")
+              out.write(f"- Public acceptance (conditional): `{report['conditional_public_gate_pass']}`\n")
+              out.write("- FULL FINAL START: **HOLD** (private/WSS/OOS/phone unverified)\n")
+              out.write(f"- Current epoch diagnostic codes: `{','.join(current) if current else 'NONE'}`\n")
+              out.write("- No market requests, no source trigger, no orders, no lock changes.\n")
+          if current:
+              print("::warning title=XRAY source-origin/evidence HOLD::" +
+                    ",".join(current))
+          # A newly missing or invalid source pair after a completed
+          # scheduled check is an operational incident. Github run failures
+          # are a diagnostic, not a repair authorization.
+          if event == "schedule" and report["pair_and_run_verified_count"] == 0:
+              print("XRAY519_EVIDENCE_ALERT_NO_VERIFIED_PAIRS")
+              # If no 48h archive exists yet, this remains an independent
+              # warning; true source acceptance is never declared.
+          print("XRAY519_READONLY_EVIDENCE_AUDIT_RECORDED")
+          PY
