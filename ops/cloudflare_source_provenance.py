@@ -46,6 +46,7 @@ def query_body(end_stamp):
             "to": int((end + timedelta(minutes=10)).timestamp() * 1000),
         },
         "view": "events",
+        "dry": True,  # API executes without persisting query results.
         "chart": False,
         "limit": MAX_EVENTS,
         "parameters": {
