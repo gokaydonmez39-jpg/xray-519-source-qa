@@ -244,6 +244,7 @@ class ProofTests(unittest.TestCase):
     def test_api_schema_and_48h_bound(self):
         p=query_body(END)
         self.assertEqual(p["view"],"events")
+        self.assertIs(p["dry"], True, "telemetry query must not persist result data")
         self.assertEqual(p["limit"],MAX_EVENTS)
         self.assertEqual(p["timeframe"]["to"]-p["timeframe"]["from"],
                          47*3600_000+10*60_000)
