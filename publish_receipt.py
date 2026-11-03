@@ -64,7 +64,17 @@ def prepare(path: Path, dest_root: Path, *, owner_repo: str, run_id: str,
         raise ReceiptError('INVALID_UTC_CLOSE')
     day = datetime.fromtimestamp((close_ms+1)/1000,timezone.utc)
     stamp=day.strftime('%Y%m%dT%H00Z')
-    rel=Path('receipts')/day.strftime('%Y')/day.strftime('%m')/day.strftime('%d')/(stamp+'-n'+mode+'.json.gz')
+    # Full-mode output is keyed by the *observed* active SPOT identity scope.
+    # Never claim n519 when Binance currently supplies 518 valid markets.
+    # Pilot modes retain their requested 250/400 filename contract.
+    if mode == '519':
+        observed = data['identity_universe']
+        if observed < 401 or observed > 564 or data['markets_selected'] != observed:
+            raise ReceiptError('UNSUPPORTED_FULL_SCOPE_CHANGE')
+        suffix = str(observed)
+    else:
+        suffix = mode
+    rel=Path('receipts')/day.strftime('%Y')/day.strftime('%m')/day.strftime('%d')/(stamp+'-n'+suffix+'.json.gz')
     out=dest_root/rel
     if out.is_symlink() or out.exists():
         raise ReceiptError('DUPLICATE_RECEIPT_REFUSED')
