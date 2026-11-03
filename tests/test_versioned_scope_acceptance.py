@@ -183,5 +183,27 @@ class ScopeReaderTests(unittest.TestCase):
         self.assertFalse(report["alert_release"])
 
 
+class RealPublishedArchiveTests(unittest.TestCase):
+    """Read the actual immutable public 10Z archive, not a synthetic fixture."""
+
+    def test_public_10z_n518_receipt_bridge_canonical_sha(self):
+        root = Path(__file__).resolve().parents[1]
+        receipt = root / "receipts/2026/11/03/20261103T1000Z-n518.json.gz"
+        bridge = root / "bridges/2026/11/03/20261103T1000Z-n518.json.gz"
+        self.assertTrue(receipt.is_file(), "ACTUAL_RECEIPT_NOT_IN_CHECKOUT")
+        self.assertTrue(bridge.is_file(), "ACTUAL_BRIDGE_NOT_IN_CHECKOUT")
+        proof = a.read_pair(root, STAMP)
+        self.assertEqual(proof["scope_count"], 518)
+        self.assertEqual(proof["technical_pass"], 492)
+        self.assertEqual(proof["technical_warmup"], 26)
+        self.assertFalse(proof["full_technical_quality"])
+        self.assertEqual(proof["scope_digest_sha256"],
+                         "aa5fbb1c924a28a18d83009edb50ce7215ba00d421d9f859572f5e71ad90486d")
+        self.assertEqual(proof["receipt_sha256"],
+                         "6cbb644470048a6eea2808dc463def106a1935ef4d5027612dac40e25633e99a")
+        self.assertEqual(proof["bridge_sha256"],
+                         "3f5cc8f9410bc6dddc85952f7e0c0d69608f16da2300602876704103901b3dbd")
+
+
 if __name__=="__main__":
     unittest.main()
