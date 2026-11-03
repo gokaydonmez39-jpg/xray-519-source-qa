@@ -110,6 +110,27 @@ class GitPublishTests(unittest.TestCase):
         self.assertEqual(len(pushes), 3)
         self.assertNotIn(self.path, self.git(self.remote, 'ls-tree', '-r', '--name-only', 'main'))
 
+    def test_actual_518_scope_pair_publish_and_idempotent_retry(self):
+        self.path518=self.path.replace('-n519.','-n518.')
+        self.bridge518=self.bridge.replace('-n519.','-n518.')
+        (self.work/self.path).rename(self.work/self.path518)
+        (self.work/self.bridge).rename(self.work/self.bridge518)
+        self.git(self.work,'add','-A')
+        self.git(self.work,'commit','--amend','--no-edit')
+        self.path,self.bridge=self.path518,self.bridge518
+        result=self.publish()
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertIn('PAIR_REMOTE_READBACK_PASS',result.stdout)
+        prior=self.git(self.remote,'rev-parse','main')
+        repeat=self.publish()
+        self.assertEqual(repeat.returncode,0,repeat.stdout+repeat.stderr)
+        self.assertEqual(self.git(self.remote,'rev-parse','main'),prior)
+
+    def test_mixed_519_and_518_pair_refused(self):
+        mod=self.module()
+        with self.assertRaisesRegex(mod.PublishBlocked,'INVALID_EVIDENCE_SCOPE'):
+            mod.publish(self.base,'main',[self.path,self.bridge.replace('-n519.','-n518.')])
+
     def test_pair_is_required(self):
         mod = self.module()
         with self.assertRaisesRegex(mod.PublishBlocked, 'MISSING_MATCHING_BRIDGE'):

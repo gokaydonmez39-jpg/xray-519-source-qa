@@ -126,10 +126,32 @@ def _pair(ref, entries, mode, stamp):
         raise PreflightBlocked("PAIR_INCOMPLETE")
     receipt = _json_gzip(_git_blob(ref, entries, receipt_path, MAX_RECEIPT), MAX_JSON)
     bridge = _json_gzip(_git_blob(ref, entries, bridge_path, MAX_BRIDGE), MAX_BRIDGE_RAW)
-    try:
-        summary = summarize(receipt)
-    except ReceiptInvalid as e:
-        raise PreflightBlocked("INVALID_PUBLISHED_EVIDENCE") from e
+    if mode == "519":
+        try:
+            summary = summarize(receipt)
+        except ReceiptInvalid as e:
+            raise PreflightBlocked("INVALID_PUBLISHED_EVIDENCE") from e
+    else:
+        # An exchange scope change can be published as separately labeled
+        # observational evidence, but can NEVER satisfy the strict 519 gate.
+        n = int(mode)
+        rows = receipt.get("results")
+        counters = [receipt.get(k) for k in (
+            "technical_pass", "technical_warmup", "technical_failed")]
+        if (not 401 <= n <= 564 or type(receipt.get("identity_universe")) is not int or
+            receipt["identity_universe"] != n or
+            type(receipt.get("markets_selected")) is not int or receipt["markets_selected"] != n or
+            type(receipt.get("technical_scanned")) is not int or receipt["technical_scanned"] != n or
+            type(receipt.get("technical_frames_requested")) is not int or
+            receipt["technical_frames_requested"] != 3 * n or
+            any(type(x) is not int or x < 0 for x in counters) or
+            sum(counters) != n or counters[2] != 0 or
+            not isinstance(rows, list) or len(rows) != n or
+            any(not isinstance(r, dict) or not isinstance(r.get("symbol"), str)
+                for r in rows) or
+            len({r["symbol"] for r in rows}) != n):
+            raise PreflightBlocked("DRIFT_SCOPE_EVIDENCE_INVALID")
+        summary = {"source_receipt_epoch_ms": receipt.get("utc_closed_epoch_1h_ms")}
     nominal = datetime.strptime(stamp, "%Y%m%dT%H00Z").replace(tzinfo=timezone.utc)
     expected_close = int(nominal.timestamp() * 1000) - 1
     if summary["source_receipt_epoch_ms"] != expected_close:
@@ -196,8 +218,21 @@ def assess(mode, stamp, local="HEAD", remote="origin/main"):
             raise PreflightBlocked("REMOTE_HISTORY_DIVERGED")
         if _source_inputs(_tree(local)) != _source_inputs(entries):
             raise PreflightBlocked("SOURCE_CHANGED")
-    if mode == "519" and _pair(remote, entries, mode, stamp):
-        return ALREADY_PUBLISHED
+    if mode == "519":
+        # Allow only one complete, cross-hashed actual-scope pair per UTC hour.
+        # A verified n518 pair is a NOOP for publication, NOT a 519 QA PASS.
+        prefix = f"receipts/{stamp[:4]}/{stamp[4:6]}/{stamp[6:8]}/{stamp}-n"
+        candidates = set()
+        for path in entries:
+            if path.startswith(prefix) and path.endswith(".json.gz"):
+                count = path[len(prefix):-len(".json.gz")]
+                if count.isdecimal() and 401 <= int(count) <= 564:
+                    candidates.add(count)
+        if len(candidates) > 1:
+            raise PreflightBlocked("CONFLICTING_SCOPE_SAME_HOUR")
+        for observed in candidates:
+            if _pair(remote, entries, observed, stamp):
+                return ALREADY_PUBLISHED
     candidate = f"receipts/{stamp[:4]}/{stamp[4:6]}/{stamp[6:8]}/{stamp}-n{mode}.json.gz"
     # A local untracked file must never be overwritten or treated as a scan
     # opportunity; a remote authentic pair was already checked above.
