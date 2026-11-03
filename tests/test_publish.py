@@ -23,7 +23,7 @@ class PublishReceiptTests(unittest.TestCase):
         self.source.write_text(json.dumps(data if data is not None else self.report),encoding='utf-8')
     def run_publication(self, data=None, **kw):
         self.write(data)
-        return pub.prepare(self.source,self.root,owner_repo=kw.get('repo','gokaydonmez39-jpg/xray-519-source-qa'),run_id='12345',run_attempt='1',mode=kw.get('mode','519'))
+        return pub.prepare(self.source,self.root,owner_repo=kw.get('repo','gokaydonmez39-jpg/xray-519-source-qa'),run_id='12345',run_attempt='1',mode=kw.get('mode','250'))
     def test_safe_compressed_evidence_and_duplicate_block(self):
         rel, sha=self.run_publication()
         self.assertTrue((self.root/rel).exists())
@@ -33,6 +33,30 @@ class PublishReceiptTests(unittest.TestCase):
         self.assertEqual(public['orders_sent'],0)
         with self.assertRaisesRegex(pub.ReceiptError,'DUPLICATE_RECEIPT_REFUSED'):
             self.run_publication()
+    def test_full_mode_uses_actual_518_scope_not_false_519_filename(self):
+        # Synthetic structural fixture only: no network or market scan.
+        d=copy.deepcopy(self.report)
+        d['identity_universe']=518
+        d['markets_selected']=518
+        d['technical_scanned']=518
+        d['technical_frames_requested']=1554
+        d['technical_pass']=518
+        d['technical_warmup']=0
+        d['technical_failed']=0
+        d['results']=[]
+        for i in range(518):
+            row=copy.deepcopy(self.report['results'][i % len(self.report['results'])])
+            row['symbol']=f'X{i:04d}USDT'
+            d['results'].append(row)
+        rel,_=self.run_publication(d,mode='519')
+        self.assertTrue(str(rel).endswith('-n518.json.gz'))
+        self.assertFalse((self.root/str(rel).replace('-n518.','-n519.')).exists())
+        self.assertEqual(json.loads(gzip.decompress((self.root/rel).read_bytes()))['identity_universe'],518)
+
+    def test_full_mode_below_approved_source_scope_fails_closed(self):
+        with self.assertRaisesRegex(pub.ReceiptError,'UNSUPPORTED_FULL_SCOPE_CHANGE'):
+            self.run_publication(mode='519')
+
     def test_wrong_repo_blocks(self):
         with self.assertRaisesRegex(pub.ReceiptError,'WRONG_REPOSITORY'):
             self.run_publication(repo='gokaydonmez39-jpg/kripto-radar')
