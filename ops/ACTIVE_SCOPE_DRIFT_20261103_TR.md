@@ -2,6 +2,16 @@
 
 **Durum:** Üretim `main` dalına geçirilmemiş güvenli onarım taslağı. Binance Global Spot `exchangeInfo` sorgusunda 3 Kasım 08:xx UTC itibarıyla `TRADING && isSpotTradingAllowed == true && quoteAsset == USDT` evreni 518; 02:00 UTC döneminin önceki uzaktan doğrulanmış kaydı 519. 03:00–08:00 UTC kaynak çalışmalarında 518 tarama, `receipt-n519` ve `bridge-n518` yüzünden `INVALID_EVIDENCE_PATH` ile FAIL_CLOSED.
 
+## Kesinleşmiş sembol kimliği ve bağımsız SHA256 doğrulaması
+
+- Binance Global SPOT `exchangeInfo`, 2026-11-03T09:04:46.578Z: 518 `TRADING && isSpotTradingAllowed && quoteAsset=USDT`.
+- `VELODROMEUSDT`: `status=BREAK`, `quoteAsset=USDT`, `baseAsset=VELODROME`, `isSpotTradingAllowed=true`. Bu durumdaki sembol aktif `TRADING` evreninin dışındadır.
+- Python `instrument_scope()` ile aynı kanonik JSON sırası, UTF-8 ve SHA256 algoritması bağımsız JS hesaplamasıyla tekrarlandı; hesaplayıcının `abc` vektörü PASS.
+- Güncel 518 sembolün SHA256 özeti `aa5fbb1c924a28a18d83009edb50ce7215ba00d421d9f859572f5e71ad90486d`: 03 Kasım 08Z kaynak çalışmasıyla **birebir aynı**.
+- Aynı 518 listeye yalnız `VELODROMEUSDT` tekrar eklenince SHA256 `b3cf5f9bd206e0f5b96e456a5189f8394ad890107e93542d3bfa3012e98104ea`: 03 Kasım 02Z son başarılı n519 kaynak çalışmasıyla **birebir aynı**.
+- Böylece 519→518 evren farkını yaratan tek kimliğin `VELODROMEUSDT` olduğu tarihsel ve güncel bağımsız digest ile kanıtlandı. Sembolün hangi nedenle BREAK'e geçtiği ve ne zaman yeniden TRADING olacağı bilinmiyor.
+- Bu kanıt `FULL_FINAL_START=HOLD` kararını **değiştirmez**. 518 kayıtları 519/48 saat şartına yazılmaz.
+
 ## Güvenlik ilkeleri
 
 1. Gerçek taranan kimlik sayısı değiştiğinde full-mode makbuz ve bridge aynı **gözlenen** `-nN` ekiyle, eski artefaktları değiştirmeden üretilir. 519 gibi görünmesi için hayali bir sembol eklenmez.
