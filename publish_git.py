@@ -14,7 +14,7 @@ import re
 import subprocess
 import tempfile
 
-PATH_RE = re.compile(r'(receipts|bridges)/\d{4}/\d{2}/\d{2}/\d{8}T\d{2}00Z-n(250|400|519)\.json\.gz\Z')
+PATH_RE = re.compile(r'(receipts|bridges)/\d{4}/\d{2}/\d{2}/\d{8}T\d{2}00Z-n([1-9]\d{0,2})\.json\.gz\Z')
 
 
 class PublishBlocked(ValueError):
@@ -46,12 +46,17 @@ def tree(ref):
 def publish(base, branch, paths, attempts=3):
     if branch != 'main' or len(paths) not in (1, 2) or len(set(paths)) != len(paths):
         raise PublishBlocked('INVALID_PUBLISH_SCOPE')
-    if any(not PATH_RE.fullmatch(p) for p in paths):
+    matches = [PATH_RE.fullmatch(p) for p in paths]
+    if any(m is None for m in matches):
         raise PublishBlocked('INVALID_EVIDENCE_PATH')
+    scopes = {int(m.group(2)) for m in matches}
+    if len(scopes) != 1 or not all(n in (250, 400) or 401 <= n <= 564 for n in scopes):
+        raise PublishBlocked('INVALID_EVIDENCE_SCOPE')
+    scope = scopes.pop()
     receipt = [p for p in paths if p.startswith('receipts/')]
     if len(receipt) != 1:
         raise PublishBlocked('MISSING_RECEIPT')
-    if receipt[0].endswith('-n519.json.gz'):
+    if scope >= 401:
         if set(paths) != {receipt[0], receipt[0].replace('receipts/', 'bridges/', 1)}:
             raise PublishBlocked('MISSING_MATCHING_BRIDGE')
     elif len(paths) != 1:
