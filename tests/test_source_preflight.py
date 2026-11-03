@@ -17,23 +17,24 @@ def canon(d):
     return json.dumps(d, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()
 
 
-def evidence(stamp=STAMP):
+def evidence(stamp=STAMP, count=519):
     from datetime import datetime, timezone
     dt = datetime.strptime(stamp, "%Y%m%dT%H00Z").replace(tzinfo=timezone.utc)
     epoch = int(dt.timestamp() * 1000) - 1
     rows = [{"symbol": f"X{i:04}USDT", "technical_data_quality": "PASS",
              "frame_quality": {"1h": "PASS", "4h": "PASS", "1d": "PASS"}}
-            for i in range(519)]
+            for i in range(count)]
     receipt = {
         "schema": "XRAY_519_SOURCE_TECH_RESEARCH_V1",
         "source": "BINANCE_PUBLIC_SPOT_REST",
         "source_qa_success": True, "scope_stable": True, "epoch_stable": True,
         "complete_identity_scope": True, "status_accounting_ok": True,
-        "identity_universe": 519, "markets_selected": 519, "technical_scanned": 519,
-        "technical_pass": 519, "technical_warmup": 0, "technical_failed": 0,
+        "identity_universe": count, "markets_selected": count, "technical_scanned": count,
+        "technical_pass": count, "technical_warmup": 0, "technical_failed": 0,
+        "technical_frames_requested": 3 * count,
         "orders_sent": 0, "notifications_sent": 0, "private_strategy_evaluated": 0,
         "live_al_claim": False, "utc_closed_epoch_1h_ms": epoch,
-        "scope_digest_sha256": "a" * 64, "receipt_key": "FIXTURE|519",
+        "scope_digest_sha256": "a" * 64, "receipt_key": f"FIXTURE|{count}",
         "public_runner": {"repository": "gokaydonmez39-jpg/xray-519-source-qa",
                           "run_id": "12345", "run_attempt": "1"},
         "results": rows,
@@ -49,7 +50,7 @@ def evidence(stamp=STAMP):
         "source_receipt_sha256": source_digest,
         "source_receipt_key": receipt["receipt_key"],
         "scope_digest_sha256": receipt["scope_digest_sha256"],
-        "utc_closed_epoch_1h_ms": epoch, "identity_universe": 519,
+        "utc_closed_epoch_1h_ms": epoch, "identity_universe": count,
         "raw_prefilter_symbols": 0, "exported_symbols": 0, "deferred_symbols": {},
         "orders_sent": 0, "notifications_sent": 0, "private_strategy_evaluated": 0,
         "live_al_claim": False
@@ -110,6 +111,31 @@ class SourcePreflightTests(unittest.TestCase):
         self.advance({self.receipt: a, self.bridge: b})
         self.assertEqual(self.check(), p.ALREADY_PUBLISHED)
         self.assertNotIn(self.receipt, self.git(self.work, "ls-tree", "-r", "--name-only", "HEAD"))
+
+    def test_real_scope_518_authenticated_pair_is_noop_without_519_claim(self):
+        r,b=evidence(count=518)
+        observed_receipt=self.receipt.replace('-n519.','-n518.')
+        observed_bridge=self.bridge.replace('-n519.','-n518.')
+        self.advance({observed_receipt:r,observed_bridge:b})
+        self.assertEqual(self.check(),p.ALREADY_PUBLISHED)
+        self.assertNotIn(self.receipt,self.git(self.work,'ls-tree','-r','--name-only','HEAD'))
+
+    def test_scope_518_partial_pair_stays_fail_closed(self):
+        r,_=evidence(count=518)
+        observed_receipt=self.receipt.replace('-n519.','-n518.')
+        self.advance({observed_receipt:r})
+        with self.assertRaisesRegex(p.PreflightBlocked,'PAIR_INCOMPLETE'):
+            self.check()
+
+    def test_scope_518_tampered_bridge_stays_fail_closed(self):
+        r,b=evidence(count=518)
+        bridge=json.loads(gzip.decompress(b))
+        bridge['source_receipt_sha256']='0'*64
+        observed_receipt=self.receipt.replace('-n519.','-n518.')
+        observed_bridge=self.bridge.replace('-n519.','-n518.')
+        self.advance({observed_receipt:r,observed_bridge:gzip.compress(canon(bridge),mtime=0)})
+        with self.assertRaisesRegex(p.PreflightBlocked,'PAIR_HASH_MISMATCH'):
+            self.check()
 
     def test_advanced_head_without_pair_is_blocked(self):
         self.advance({"ops/release-note.txt": b"notes"})
