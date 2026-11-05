@@ -1,0 +1,52 @@
+name: XRAY Full-Quality Source Real-Size Probe (NO PUBLISH / NO ORDER)
+on:
+  push:
+    branches: ['audit/full-private-source-bridge-v2-20261105']
+    paths: ['.github/workflows/full-quality-real-size-probe.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  capacity-probe:
+    if: github.repository == 'gokaydonmez39-jpg/xray-519-source-qa'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 17
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Read only source checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Python unit safety regressions
+        run: python3 -m unittest discover -s tests -q
+      - name: Probe complete dynamic USDT universe, no public commit or private signal
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          python3 "$GITHUB_WORKSPACE/research_519.py" --max-markets 519 --output source.json --bridge-output full-private.json.gz --bridge-profile full-quality --pace 0.15
+          PYTHONPATH="$GITHUB_WORKSPACE" python3 - <<'PY'
+          import gzip,hashlib,json,os
+          from pathlib import Path
+          from bridge_519 import canonical_bytes,MAX_GZIP_BYTES,MAX_RAW_BYTES
+          r=json.loads(Path('source.json').read_bytes())
+          compressed=Path('full-private.json.gz').read_bytes()
+          raw=gzip.decompress(compressed)
+          bridge=json.loads(raw)
+          assert canonical_bytes(bridge)==raw
+          assert bridge['source_receipt_sha256']==hashlib.sha256(canonical_bytes(r)).hexdigest()
+          assert bridge['identity_universe']==r['identity_universe']
+          assert bridge['transport_profile']=='FULL_QUALITY_READY_V2'
+          assert bridge['transport_ready_count']+bridge['transport_deferred_count']==r['identity_universe']
+          assert bridge['exported_symbols']==bridge['transport_ready_count']
+          assert len(raw)<=MAX_RAW_BYTES and len(compressed)<=MAX_GZIP_BYTES
+          assert bridge['orders_sent']==0 and bridge['notifications_sent']==0 and bridge['live_al_claim'] is False
+          report={'status':'FULL_QUALITY_REAL_SOURCE_CAPACITY_PASS_NO_PUBLISH',
+                  'epoch_utc':bridge['utc_closed_epoch_1h_ms']+1,
+                  'identity':r['identity_universe'],'raw_bytes':len(raw),'gzip_bytes':len(compressed),
+                  'transport_ready':bridge['transport_ready_count'],
+                  'transport_deferred':bridge['transport_deferred_count'],
+                  'unpublished':True,'no_orders':True,'no_notifications':True}
+          print(json.dumps(report,sort_keys=True))
+          PY
