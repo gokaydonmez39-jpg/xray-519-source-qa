@@ -80,6 +80,35 @@ class FullSourceTransportTests(unittest.TestCase):
             with self.assertRaisesRegex(BridgeError, 'BRIDGE_RAW_SIZE_LIMIT'):
                 research.scan(MixedLiquidityProvider(2), bridge_sink=BridgeCollector(full_scope=True))
 
+    def test_full_518_synthetic_raw_capacity_or_explicit_fail_closed(self):
+        # Synthetic capacity fixture (not Binance evidence). The new profile
+        # must either fit its immutable raw limit or raise the typed HOLD.
+        template = BridgeCollector()
+        baseline = research.scan(MixedLiquidityProvider(2), bridge_sink=template)
+        receipt = copy.deepcopy(baseline)
+        receipt['identity_universe'] = 518
+        receipt['markets_selected'] = 518
+        receipt['results'] = []
+        sink = BridgeCollector(full_scope=True)
+        bars = template.frames['BTCUSDT']
+        for n in range(518):
+            sym = 'BTCUSDT' if n == 0 else f'SIM{n:04d}USDT'
+            row = copy.deepcopy(baseline['results'][0])
+            row['symbol'] = sym
+            receipt['results'].append(row)
+            for interval, candles in bars.items():
+                sink.put(sym, interval, candles)
+        try:
+            result = sink.finish(receipt)
+        except BridgeError as exc:
+            self.assertEqual(str(exc), 'BRIDGE_RAW_SIZE_LIMIT')
+            self.assertIsNone(sink.document)
+        else:
+            self.assertEqual(result['transport_ready_count'], 518)
+            self.assertEqual(result['transport_deferred_count'], 0)
+            self.assertLessEqual(len(canonical_bytes(result)), bridge_519.MAX_RAW_BYTES)
+            self.assertFalse(result['live_al_claim'])
+
     def test_wrong_profile_is_rejected_before_collector(self):
         with self.assertRaisesRegex(BridgeError, 'INVALID_BRIDGE_PROFILE'):
             BridgeCollector(full_scope='true')
