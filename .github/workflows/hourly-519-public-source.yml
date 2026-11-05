@@ -2,10 +2,15 @@ name: XRAY 519 public Spot closed-bar research
 
 on:
   schedule:
-    - cron: '4 * * * *'
-    # Independent native opportunity if GitHub drops/delays :04.
-    # Existing single concurrency group + authenticated same-hour no-op prevent extra scans.
-    - cron: '8 * * * *'
+    # V2 design (STAGING ONLY): start earlier because 518-symbol source
+    # observation takes about 238 s plus unit tests, checkout and publishing.
+    # The existing :09 source-audit dependency MUST NOT be treated as PASS
+    # unless a same-epoch immutable receipt and bridge exist before that gate.
+    - cron: '1 * * * *'
+    # Independent native fallback if GitHub drops/delays :01.
+    # Same concurrency group and authenticated same-hour preflight/no-op
+    # prohibit duplicate scans and must remain enabled.
+    - cron: '2 * * * *'
   # Run one new-source epoch after a reviewed code release; receipt pushes never retrigger.
   push:
     branches: [main]
