@@ -70,10 +70,12 @@ class EvidenceRefShadowIntegrationTests(unittest.TestCase):
         self.assertEqual(self._remote_branch("main"), self.origin)
         self.assertNotEqual(self._remote_branch(EVIDENCE_BRANCH), self.origin)
         for path in self.paths:
-            self.assertEqual(run("--git-dir", self.remote, "show",
-                                 "refs/heads/" + EVIDENCE_BRANCH + ":" + path)
-                             .encode("utf-8"),
-                             (self.work / path).read_bytes())
+            blob = subprocess.run(
+                ["git", "--git-dir", str(self.remote), "show",
+                 "refs/heads/" + EVIDENCE_BRANCH + ":" + path],
+                check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            ).stdout
+            self.assertEqual(blob, (self.work / path).read_bytes())
 
     def test_exact_pair_retry_is_idempotent(self):
         first = append_pair(code_base=self.origin, evidence_origin=self.origin,
