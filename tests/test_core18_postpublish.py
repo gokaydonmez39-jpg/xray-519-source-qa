@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import copy
+import contextlib
+import io
+import tempfile
 import gzip
 import hashlib
 import json
 import unittest
 from pathlib import Path
 
-from ops.core18_postpublish import verify_pair_then_project
+from ops.core18_postpublish import main, verify_pair_then_project
 from test_core18_compact_log import raw, sample
 
 RUN = "42219779437"
@@ -140,6 +143,48 @@ class PostPublishedSourceGateTests(unittest.TestCase):
         src, pub, bridge = fixture()
         self.assertEqual(call(src, pub, bridge, run="0001")["reason"],
                          "RUNNER_IDENTITY_INVALID")
+
+    def _run_cli(self, src, pub, bridge):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "source.json").write_bytes(src)
+            (base / "receipt.gz").write_bytes(gz(pub))
+            (base / "bridge.gz").write_bytes(gz(bridge))
+            output = io.StringIO()
+            argv = [
+                "--source", str(base / "source.json"),
+                "--receipt", str(base / "receipt.gz"),
+                "--bridge", str(base / "bridge.gz"),
+                "--runner-id", RUN, "--run-attempt", str(ATTEMPT),
+            ]
+            with contextlib.redirect_stdout(output):
+                code = main(argv)
+            entries = [line for line in output.getvalue().splitlines()
+                       if line.startswith("CORE18_PUBLIC_INPUTS_V1=")]
+            self.assertEqual(len(entries), 1)
+            return code, json.loads(entries[0].split("=", 1)[1])
+
+    def test_real_deferred_bridge_holds_core18_but_preserves_source_job(self):
+        src, pub, bridge = fixture()
+        bridge["deferred_symbols"]["BTCUSDT"] = "SOURCE_FRAME_NOT_PASS"
+        bridge["markets"].pop("BTCUSDT")
+        bridge["exported_symbols"] = 517
+        bridge["transport_ready_count"] = 517
+        bridge["transport_deferred_count"] = 1
+        code, projection = self._run_cli(src, pub, bridge)
+        self.assertEqual(code, 0)
+        self.assertEqual(projection["status"], "HOLD")
+        self.assertEqual(projection["reason"], "CORE18_BRIDGE_DEFERRED")
+        self.assertEqual(projection["records"], [])
+
+    def test_corrupt_published_sha_fails_source_job_closed(self):
+        src, pub, bridge = fixture()
+        pub["source_receipt_sha256"] = "0" * 64
+        code, projection = self._run_cli(src, pub, bridge)
+        self.assertEqual(code, 2)
+        self.assertEqual(projection["status"], "HOLD")
+        self.assertEqual(projection["reason"],
+                         "SOURCE_PUBLISHED_BRIDGE_SHA_MISMATCH")
 
     def test_only_after_published_pair_remote_verification(self):
         code = Path("research_519.py").read_text()
