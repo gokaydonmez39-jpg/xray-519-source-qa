@@ -182,7 +182,7 @@ class EvidenceRefShadowIntegrationTests(unittest.TestCase):
         self.assertEqual(self._remote_branch(EVIDENCE_BRANCH), self.origin)
 
     def test_existing_single_source_workflow_shadow_is_after_primary_proof(self):
-        script = Path(".github/workflows/hourly-519-public-source.yml").read_text()
+        script = (Path(__file__).resolve().parent.parent / ".github/workflows/hourly-519-public-source.yml").read_text()
         self.assertLess(script.index("python3 publish_git.py"),
                         script.index("ops.evidence_ref_publisher"))
         self.assertLess(script.index("python3 verify_remote_pair.py"),
