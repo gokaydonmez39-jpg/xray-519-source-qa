@@ -120,6 +120,67 @@ class EvidenceRefShadowIntegrationTests(unittest.TestCase):
             append_pair(code_base=self.origin, evidence_origin=self.origin,
                         paths=self.paths)
 
+    def test_shadow_requires_exact_existing_source_main_pair(self):
+        with self.assertRaisesRegex(EvidenceBlocked,
+                                    "SHADOW_MAIN_NOT_EXACT_VERIFIED_PAIR"):
+            append_pair(code_base=self.origin, evidence_origin=self.origin,
+                        paths=self.paths, shadow_source_main=True)
+        self.assertEqual(self._remote_branch(EVIDENCE_BRANCH), self.origin)
+
+    def test_shadow_mirrors_only_published_source_pair(self):
+        run("push", "origin", "HEAD:main")  # normal existing main publisher
+        source_head = self._remote_branch("main")
+        self.assertEqual(source_head, self.local_head)
+        result = append_pair(code_base=self.origin,
+                             evidence_origin=self.origin, paths=self.paths,
+                             shadow_source_main=True)
+        self.assertEqual(result["status"],
+                         "SHADOW_EVIDENCE_REF_PAIR_DURABLE_READBACK_NO_LIVE_CONSUMER")
+        self.assertTrue(result["source_main_exact_pair_verified"])
+        self.assertFalse(result["code_main_unchanged"])
+        self.assertEqual(result["orders_sent"], 0)
+        self.assertEqual(self._remote_branch("main"), source_head)
+        self.assertNotEqual(self._remote_branch(EVIDENCE_BRANCH), self.origin)
+
+    def test_shadow_repeat_is_exact_idempotent(self):
+        run("push", "origin", "HEAD:main")
+        first = append_pair(code_base=self.origin, evidence_origin=self.origin,
+                            paths=self.paths, shadow_source_main=True)
+        second = append_pair(code_base=self.origin, evidence_origin=self.origin,
+                             paths=self.paths, shadow_source_main=True)
+        self.assertEqual(first["evidence_commit"], second["evidence_commit"])
+        self.assertEqual(self._remote_branch("main"), self.local_head)
+
+    def test_shadow_rejects_unexpected_main_source_code_change(self):
+        (self.work / "README.md").write_text("unapproved new code\n")
+        run("add", "README.md")
+        run("commit", "--amend", "--no-edit")
+        tampered_main = run("rev-parse", "HEAD")
+        run("push", "origin", "HEAD:main")
+        run("checkout", "--detach", self.local_head)
+        with self.assertRaisesRegex(EvidenceBlocked,
+                                    "SHADOW_MAIN_NOT_EXACT_VERIFIED_PAIR"):
+            append_pair(code_base=self.origin, evidence_origin=self.origin,
+                        paths=self.paths, shadow_source_main=True)
+        self.assertEqual(self._remote_branch("main"), tampered_main)
+        self.assertEqual(self._remote_branch(EVIDENCE_BRANCH), self.origin)
+
+    def test_shadow_rejects_mismatched_main_published_pair(self):
+        run("push", "origin", "HEAD:main")
+        run("checkout", "-b", "tamper-main", self.local_head)
+        path = self.work / self.paths[0]
+        content = gzip.decompress(path.read_bytes())
+        path.write_bytes(gzip.compress(content, mtime=42))
+        run("add", self.paths[0])
+        run("commit", "-m", "replace source compressed blob")
+        run("push", "origin", "HEAD:main")
+        run("checkout", "--detach", self.local_head)
+        with self.assertRaisesRegex(EvidenceBlocked,
+                                    "SHADOW_MAIN_NOT_EXACT_VERIFIED_PAIR"):
+            append_pair(code_base=self.origin, evidence_origin=self.origin,
+                        paths=self.paths, shadow_source_main=True)
+        self.assertEqual(self._remote_branch(EVIDENCE_BRANCH), self.origin)
+
     def test_unsafe_paths_fail_before_network(self):
         with self.assertRaises(EvidenceBlocked):
             path_contract(("../secrets", self.paths[1]))
