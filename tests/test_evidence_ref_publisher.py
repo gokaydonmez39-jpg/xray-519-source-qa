@@ -181,6 +181,19 @@ class EvidenceRefShadowIntegrationTests(unittest.TestCase):
                         paths=self.paths, shadow_source_main=True)
         self.assertEqual(self._remote_branch(EVIDENCE_BRANCH), self.origin)
 
+    def test_existing_single_source_workflow_shadow_is_after_primary_proof(self):
+        script = Path(".github/workflows/hourly-519-public-source.yml").read_text()
+        self.assertLess(script.index("python3 publish_git.py"),
+                        script.index("ops.evidence_ref_publisher"))
+        self.assertLess(script.index("python3 verify_remote_pair.py"),
+                        script.index("ops.evidence_ref_publisher"))
+        self.assertIn("--shadow-source-main", script)
+        self.assertIn("EVIDENCE_SHADOW_HOLD_PRIMARY_SOURCE_UNCHANGED", script)
+        self.assertIn("c0dd934f418956141697022505d7ce99112eab6f", script)
+        self.assertEqual(script.count("cron:"), 2)
+        self.assertEqual(script.count("runs-on:"), 1)
+        self.assertNotIn("xray-source-evidence", script.split("push:", 1)[1].split("permissions:", 1)[0])
+
     def test_unsafe_paths_fail_before_network(self):
         with self.assertRaises(EvidenceBlocked):
             path_contract(("../secrets", self.paths[1]))
