@@ -82,6 +82,37 @@ class PublishReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(pub.ReceiptError,'UNKNOWN_NESTED_PUBLIC_FIELD'):
             self.run_publication(d)
 
+    def test_core18_public_projection_is_preserved(self):
+        rel,_=self.run_publication()
+        public=json.loads(gzip.decompress((self.root/rel).read_bytes()))
+        fields=public['results'][0]['technical']
+        self.assertIn('ema20_4h_previous', fields)
+        self.assertIn('last_closed_price_4h', fields)
+        self.assertIn('last10_low_1h', fields)
+        self.assertGreater(fields['ema20_4h_previous'], 0)
+        self.assertLessEqual(fields['last10_low_1h'], fields['last_closed_price'])
+
+    def test_core18_invalid_numbers_blocked(self):
+        for invalid in (-1, 0, '100', None):
+            with self.subTest(invalid=invalid):
+                d=copy.deepcopy(self.report)
+                d['results'][0]['technical']['ema20_4h_previous']=invalid
+                with self.assertRaisesRegex(pub.ReceiptError,'INVALID_CORE18_CLOSED_BAR_INPUT'):
+                    self.run_publication(d)
+
+    def test_core18_recurrence_forgery_rejected(self):
+        d=copy.deepcopy(self.report)
+        d['results'][0]['technical']['ema20_4h_previous']+=10
+        with self.assertRaisesRegex(pub.ReceiptError,'CORE18_EMA_RECURRENCE_MISMATCH'):
+            self.run_publication(d)
+
+    def test_core18_stop10_above_closed_price_rejected(self):
+        d=copy.deepcopy(self.report)
+        d['results'][0]['technical']['last10_low_1h']=(
+            d['results'][0]['technical']['last_closed_price']+1)
+        with self.assertRaisesRegex(pub.ReceiptError,'CORE18_STOP10_CLOSED_BAR_CONTRADICTION'):
+            self.run_publication(d)
+
     def test_unknown_result_field_blocked(self):
         d=copy.deepcopy(self.report);d['results'][0]['private_strategy']='x'
         with self.assertRaisesRegex(pub.ReceiptError,'UNKNOWN_RESULT_FIELD_STOP_PUBLICATION'):
