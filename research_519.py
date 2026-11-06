@@ -23,7 +23,6 @@ import urllib.parse
 import urllib.request
 from typing import Any
 from bridge_519 import BridgeCollector, COUNTS as BRIDGE_COUNTS, atomic_gzip
-from ops.core18_compact_log import build as build_core18_public_inputs
 
 HOUR = 3_600_000
 DAY = 24 * HOUR
@@ -483,11 +482,6 @@ def main(argv: list[str] | None = None) -> int:
                               'eligible_raw_source_markets':bridge_sink.document['raw_prefilter_symbols'],
                               'transported_quality_markets':bridge_sink.document['exported_symbols'],
                               'bridge_profile':args.bridge_profile}),file=sys.stderr)
-        if args.max_markets == 519 and report.get('source_qa_success') is True:
-            projected = build_core18_public_inputs(report, args.output.read_bytes())
-            print('CORE18_PUBLIC_INPUTS_V1=' + json.dumps(
-                projected, ensure_ascii=False, sort_keys=True,
-                separators=(',', ':'), allow_nan=False))
         print(json.dumps({k:v for k,v in report.items() if k != 'results'},ensure_ascii=False))
         return 0 if report['source_qa_success'] else 2
     except (SourceError, ValueError, TypeError, KeyError) as e:
