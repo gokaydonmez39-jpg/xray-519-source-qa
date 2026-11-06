@@ -34,8 +34,30 @@ def prepare(bridge: Path, receipt: Path, root: Path) -> tuple[str, str]:
             raise BridgeError('BRIDGE_PROVENANCE_MISMATCH')
     if doc.get('orders_sent') != 0 or doc.get('notifications_sent') != 0 or doc.get('live_al_claim') is not False:
         raise BridgeError('BRIDGE_UNSAFE')
-    if doc.get('raw_prefilter_symbols') != doc.get('exported_symbols') + len(doc.get('deferred_symbols', {})):
-        raise BridgeError('BRIDGE_COUNT_MISMATCH')
+    profile=doc.get('transport_profile', 'PREFILTER_V1')
+    selected=doc.get('markets')
+    deferred=doc.get('deferred_symbols')
+    if not isinstance(selected, dict) or not isinstance(deferred, dict):
+        raise BridgeError('BRIDGE_INVENTORY_INVALID')
+    if set(selected).intersection(deferred):
+        raise BridgeError('BRIDGE_SCOPE_OVERLAP')
+    if profile == 'PREFILTER_V1':
+        if doc.get('raw_prefilter_symbols') != len(selected) + len(deferred):
+            raise BridgeError('BRIDGE_COUNT_MISMATCH')
+    elif profile == 'FULL_QUALITY_READY_V2':
+        if (doc.get('identity_universe') != len(selected) + len(deferred) or
+                doc.get('transport_ready_count') != len(selected) or
+                doc.get('transport_deferred_count') != len(deferred) or
+                doc.get('exported_symbols') != len(selected) or
+                doc.get('raw_prefilter_symbols') != sum(
+                    row.get('raw_15m_15bp_prefilter') is True
+                    for row in source.get('results', []))):
+            raise BridgeError('FULL_TRANSPORT_SCOPE_MISMATCH')
+        source_names={row.get('symbol') for row in source.get('results', [])}
+        if len(source_names) != len(selected) + len(deferred) or set(selected).union(deferred) != source_names:
+            raise BridgeError('FULL_TRANSPORT_IDENTITY_MISMATCH')
+    else:
+        raise BridgeError('UNKNOWN_TRANSPORT_PROFILE')
     epoch=source['utc_closed_epoch_1h_ms'] + 1
     dt=datetime.fromtimestamp(epoch/1000,timezone.utc)
     relative=f'bridges/{dt:%Y/%m/%d/%Y%m%dT%H00Z}-n{source["identity_universe"]}.json.gz'

@@ -34,7 +34,10 @@ def _safe_symbol(symbol: str) -> bool:
 
 class BridgeCollector:
     """Memory-bounded source snapshot; private signal engine stays separate."""
-    def __init__(self):
+    def __init__(self, *, full_scope: bool = False):
+        if type(full_scope) is not bool:
+            raise BridgeError('INVALID_BRIDGE_PROFILE')
+        self.full_scope = full_scope
         self.frames: dict[str, dict[str, list[dict]]] = {}
         self.problems: dict[str, dict[str, str]] = {}
         self.document: dict | None = None
@@ -93,7 +96,7 @@ class BridgeCollector:
             if sym in names:
                 raise BridgeError('DUPLICATE_SOURCE_MARKET')
             names.add(sym)
-            if row.get('raw_15m_15bp_prefilter') is not True:
+            if not self.full_scope and row.get('raw_15m_15bp_prefilter') is not True:
                 continue
             if row.get('technical_data_quality') != 'PASS':
                 deferred[sym] = 'SOURCE_FRAME_NOT_PASS'
@@ -111,8 +114,12 @@ class BridgeCollector:
                 spread = float(market['spread_bp'])
             except (ValueError,TypeError,KeyError) as exc:
                 raise BridgeError('INVALID_PREFILTER_VALUES') from exc
-            if (not math.isfinite(q) or q < 15_000_000 or not math.isfinite(spread)
-                    or not 0 <= spread <= 15):
+            if (not math.isfinite(q) or q < 0 or not math.isfinite(spread)
+                    or not 0 <= spread):
+                deferred[sym] = 'BAD_LIVE_LIQUIDITY_SNAPSHOT'
+                continue
+            if (not self.full_scope and
+                    (q < 15_000_000 or spread > 15)):
                 raise BridgeError('PREFILTER_CLAIM_INVALID')
             for interval, expected in (('1h', 3_600_000), ('4h', 14_400_000), ('1d', 86_400_000)):
                 end = (int(receipt['start_server_ms']) // expected) * expected - 1
@@ -138,6 +145,14 @@ class BridgeCollector:
             'orders_sent':0,'notifications_sent':0,'private_strategy_evaluated':0,
             'live_al_claim':False,
         }
+        if self.full_scope:
+            if len(selected) + len(deferred) != receipt['identity_universe']:
+                self.document = None
+                raise BridgeError('FULL_BRIDGE_SCOPE_NOT_RECONCILED')
+            self.document['transport_profile'] = 'FULL_QUALITY_READY_V2'
+            self.document['transport_ready_count'] = len(selected)
+            self.document['transport_deferred_count'] = len(deferred)
+            # Full-transport data never authorizes private AL or broker actions.
         raw = canonical_bytes(self.document)
         if len(raw) > MAX_RAW_BYTES:
             self.document = None

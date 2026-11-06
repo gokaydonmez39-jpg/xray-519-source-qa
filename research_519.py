@@ -453,6 +453,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument('--max-markets',type=int,choices=(250,400,519),default=519)
     ap.add_argument('--output',type=Path,required=True)
     ap.add_argument('--bridge-output',type=Path,default=None)
+    ap.add_argument('--bridge-profile',choices=('prefilter','full-quality'),default='prefilter')
     ap.add_argument('--pace',type=float,default=0.15)
     args = ap.parse_args(argv)
     if args.pace < 0.15:
@@ -461,8 +462,10 @@ def main(argv: list[str] | None = None) -> int:
         ap.error('bridge requires complete 519-identity scope and does not support partial scans')
     if args.bridge_output is not None and args.bridge_output == args.output:
         ap.error('bridge must never overwrite source receipt')
+    if args.bridge_profile == 'full-quality' and args.bridge_output is None:
+        ap.error('full-quality profile requires a bridge-output destination')
     provider = HttpProvider(pace=args.pace)
-    bridge_sink = BridgeCollector() if args.bridge_output is not None else None
+    bridge_sink = BridgeCollector(full_scope=(args.bridge_profile == 'full-quality')) if args.bridge_output is not None else None
     print(json.dumps({'event':'SOURCE_TRANSPORT', 'transport':type(provider.opener).__name__}),file=sys.stderr)
     try:
         report = scan(provider,max_markets=args.max_markets,bridge_sink=bridge_sink)
@@ -473,7 +476,9 @@ def main(argv: list[str] | None = None) -> int:
             checksum, nbytes = atomic_gzip(args.bridge_output, bridge_sink.document)
             print(json.dumps({'event':'PUBLIC_INPUT_BRIDGE_PREPARED_NOT_PRIVATE_AL',
                               'sha256':checksum,'bytes':nbytes,
-                              'eligible_raw_source_markets':bridge_sink.document['exported_symbols']}),file=sys.stderr)
+                              'eligible_raw_source_markets':bridge_sink.document['raw_prefilter_symbols'],
+                              'transported_quality_markets':bridge_sink.document['exported_symbols'],
+                              'bridge_profile':args.bridge_profile}),file=sys.stderr)
         print(json.dumps({k:v for k,v in report.items() if k != 'results'},ensure_ascii=False))
         return 0 if report['source_qa_success'] else 2
     except (SourceError, ValueError, TypeError, KeyError) as e:
