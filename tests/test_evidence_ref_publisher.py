@@ -195,6 +195,19 @@ class EvidenceRefShadowIntegrationTests(unittest.TestCase):
             dest.write_bytes(gzip.compress(b'{"prior":true}', mtime=0))
         run("add", *previous)
         run("commit", "-m", "an earlier append-only evidence epoch")
+        # Exercise history beyond one shallow boundary: twenty separate
+        # historical *synthetic local* ref commits, never GitHub backfill.
+        for day in range(1, 21):
+            other = (
+                f"receipts/2026/10/{day:02d}/202610{day:02d}T1300Z-n518.json.gz",
+                f"bridges/2026/10/{day:02d}/202610{day:02d}T1300Z-n518.json.gz",
+            )
+            for name in other:
+                dest = self.work / name
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(gzip.compress(b'{"prior":true}', mtime=0))
+            run("add", *other)
+            run("commit", "-m", f"local evidence-history fixture {day}")
         run("push", "origin", "HEAD:" + EVIDENCE_BRANCH)
         run("checkout", "--detach", self.local_head)
         shallow = self.work.parent / "shallow-checkout"
