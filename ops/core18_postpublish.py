@@ -164,7 +164,7 @@ def main(argv: list[str] | None = None) -> int:
     if result["status"] == "PASS_18OF18_SOURCE_INPUTS_ONLY":
         return 0
     if result.get("reason", "").startswith((
-        "CORE18_SOURCE_", "CORE18_FRAME_", "CORE18_TICKER_",
+        "CORE18_SOURCE_", "CORE18_BRIDGE_", "CORE18_FRAME_", "CORE18_TICKER_",
         "CORE18_BAR_", "CORE18_INDICATOR_", "CORE18_LIQUIDITY_",
         "CORE18_EMA_", "CORE18_STOP_", "CORE18_CARDINALITY_",
     )):
