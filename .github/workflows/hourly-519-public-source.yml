@@ -117,3 +117,12 @@ jobs:
             python3 publish_git.py --base "$SCAN_BASE" --branch "$GITHUB_REF_NAME" "$FILE"
           fi
           python3 verify_remote_pair.py
+          # A CORE18 payload must never be described as released until the
+          # exact receipt+bridge have been pushed and Git remote SHA read back.
+          # The input-only projection uses existing files; no new requests,
+          # scheduler, private strategy, Sheets writer, alert or broker order.
+          if [ "$MODE" = 519 ]; then
+            python3 -m ops.core18_postpublish --source "$OUT" --receipt "$FILE" \
+              --bridge "$BFILE" --runner-id "$GITHUB_RUN_ID" \
+              --run-attempt "$GITHUB_RUN_ATTEMPT"
+          fi
