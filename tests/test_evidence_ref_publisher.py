@@ -181,6 +181,44 @@ class EvidenceRefShadowIntegrationTests(unittest.TestCase):
                         paths=self.paths, shadow_source_main=True)
         self.assertEqual(self._remote_branch(EVIDENCE_BRANCH), self.origin)
 
+    def test_shallow_git_checkout_verifies_prior_evidence_ancestry(self):
+        # Reproduce real GitHub actions/checkout fetch-depth:1: the evidence
+        # branch has a legitimate earlier append, but its parent is not fetched.
+        run("checkout", "-b", "prior-evidence", EVIDENCE_BRANCH)
+        previous = (
+            "receipts/2026/11/05/20261105T1300Z-n518.json.gz",
+            "bridges/2026/11/05/20261105T1300Z-n518.json.gz",
+        )
+        for name in previous:
+            dest = self.work / name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(gzip.compress(b'{"prior":true}', mtime=0))
+        run("add", *previous)
+        run("commit", "-m", "an earlier append-only evidence epoch")
+        run("push", "origin", "HEAD:" + EVIDENCE_BRANCH)
+        run("checkout", "--detach", self.local_head)
+        shallow = self.work.parent / "shallow-checkout"
+        run("clone", "--depth=1", "--branch=main",
+            "file://" + str(self.remote), shallow)
+        os.chdir(shallow)
+        run("config", "user.name", "Local QA")
+        run("config", "user.email", "qa@example.invalid")
+        self.assertEqual(run("rev-parse", "--is-shallow-repository"), "true")
+        for name in self.paths:
+            dest = shallow / name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes((self.work / name).read_bytes())
+        run("add", *self.paths)
+        run("commit", "-m", "new verified source pair")
+        result = append_pair(
+            code_base=self.origin, evidence_origin=self.origin,
+            paths=self.paths)
+        self.assertEqual(
+            result["status"], "EVIDENCE_REF_PAIR_DURABLE_READBACK_ONLY")
+        self.assertEqual(self._remote_branch("main"), self.origin)
+        self.assertNotEqual(
+            self._remote_branch(EVIDENCE_BRANCH), self.origin)
+
     def test_existing_single_source_workflow_shadow_is_after_primary_proof(self):
         script = (Path(__file__).resolve().parent.parent / ".github/workflows/hourly-519-public-source.yml").read_text()
         self.assertLess(script.index("python3 publish_git.py"),
