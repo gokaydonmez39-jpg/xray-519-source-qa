@@ -11,6 +11,8 @@ import unittest
 from ops.evidence_ref_publisher import (
     EVIDENCE_BRANCH, EvidenceBlocked, append_pair, path_contract
 )
+from ops.evidence_ref_pair_audit import PairRejected, audit_pair
+from evidence_ref_fixture import fixture_pair
 
 
 def run(*args):
@@ -39,14 +41,11 @@ class EvidenceRefShadowIntegrationTests(unittest.TestCase):
         self.origin = run("rev-parse", "HEAD")
         run("branch", EVIDENCE_BRANCH, self.origin)
         run("push", "origin", EVIDENCE_BRANCH)
-        self.paths = (
-            "receipts/2026/11/06/20261106T1300Z-n518.json.gz",
-            "bridges/2026/11/06/20261106T1300Z-n518.json.gz"
-        )
-        for name in self.paths:
+        self.paths, receipt, bridge, self.synthetic_source, self.synthetic_bridge = fixture_pair()
+        for name, data in zip(self.paths, (receipt, bridge)):
             f = self.work / name
             f.parent.mkdir(parents=True, exist_ok=True)
-            f.write_bytes(gzip.compress(b'{"source":"test", "orders_sent":0}', mtime=0))
+            f.write_bytes(data)
         run("add", *self.paths)
         run("commit", "-m", "local candidate pair, not main")
         self.local_head = run("rev-parse", "HEAD")
@@ -88,7 +87,8 @@ class EvidenceRefShadowIntegrationTests(unittest.TestCase):
     def test_mutated_existing_receipt_is_rejected(self):
         append_pair(code_base=self.origin, evidence_origin=self.origin,
                     paths=self.paths)
-        (self.work / self.paths[0]).write_bytes(gzip.compress(b"tampered", mtime=0))
+        original = gzip.decompress((self.work / self.paths[0]).read_bytes())
+        (self.work / self.paths[0]).write_bytes(gzip.compress(original, mtime=42))
         run("add", self.paths[0])
         run("commit", "--amend", "--no-edit")
         with self.assertRaisesRegex(EvidenceBlocked, "IMMUTABLE_EPOCH_COLLISION"):
