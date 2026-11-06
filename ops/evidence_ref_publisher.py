@@ -7,6 +7,7 @@ historical backfill.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -111,6 +112,11 @@ def append_pair(*, code_base: str, evidence_origin: str,
     )
     if type(shadow_source_main) is not bool:
         raise EvidenceBlocked("INVALID_SHADOW_RELEASE_MODE")
+    # NO_BACKFILL: evidence-ref writes only for the current genuine UTC H.
+    # Time-window < H+15 remains a separate live source/private acceptance
+    # check; this local shadow projection never claims that acceptance.
+    if checked["epoch_utc"][:13] != datetime.now(timezone.utc).strftime("%Y-%m-%dT%H"):
+        raise EvidenceBlocked("NOT_CURRENT_UTC_HOUR_NO_BACKFILL")
     for _ in range(attempts):
         # In shadow mode, the existing canonical publisher has *already*
         # appended exactly this pair to main. Verify no executable source
