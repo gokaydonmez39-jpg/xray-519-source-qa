@@ -15,6 +15,8 @@ import re
 import subprocess
 import tempfile
 
+from ops.evidence_ref_pair_audit import audit_pair
+
 EVIDENCE_BRANCH = "xray-source-evidence"
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 PATH = re.compile(
@@ -97,8 +99,15 @@ def append_pair(*, code_base: str, evidence_origin: str,
         cap = 200_000 if path.startswith("receipts/") else 8_388_608
         if not 0 < len(content) <= cap:
             raise EvidenceBlocked("BLOB_SIZE_INVALID")
-        buffers[path] = hashlib.sha256(content).hexdigest()
+        buffers[path] = content
 
+    # Before any remote ref update, reject mismatched/grafted source evidence.
+    checked = audit_pair(
+        buffers[paths[0] if paths[0].startswith("receipts/") else paths[1]],
+        buffers[paths[0] if paths[0].startswith("bridges/") else paths[1]],
+        next(p for p in paths if p.startswith("receipts/")),
+        next(p for p in paths if p.startswith("bridges/")),
+    )
     for _ in range(attempts):
         # Source code can advance only via independently reviewed main PRs.
         # A source code update during this scan invalidates the old producer.
@@ -158,7 +167,7 @@ def append_pair(*, code_base: str, evidence_origin: str,
             real = hashlib.sha256(
                 git("show", readback + ":" + path).stdout
             ).hexdigest()
-            if real != buffers[path]:
+            if real != hashlib.sha256(buffers[path]).hexdigest():
                 raise EvidenceBlocked("REMOTE_BYTES_SHA256_MISMATCH")
         git("fetch", "--no-tags", "origin", "refs/heads/main")
         if out("rev-parse", "FETCH_HEAD") != code_base:
@@ -169,7 +178,7 @@ def append_pair(*, code_base: str, evidence_origin: str,
             "evidence_branch": EVIDENCE_BRANCH,
             "evidence_commit": readback,
             "source_code_sha": code_base,
-            "files": [{"path": p, "sha256": buffers[p]}
+            "files": [{"path": p, "sha256": hashlib.sha256(buffers[p]).hexdigest()}
                       for p in sorted(paths)],
             "research_only": True,
             "orders_sent": 0,
