@@ -14,7 +14,7 @@ import json
 import re
 from pathlib import Path
 
-from ops.core18_compact_log import build
+from ops.core18_compact_log import CORE18, build
 
 MAX_SOURCE = 2_500_000
 MAX_RECEIPT_GZIP = 200_000
@@ -116,6 +116,11 @@ def verify_pair_then_project(
                     {row.get("symbol") for row in source.get("results", [])
                      if isinstance(row, dict)}):
             return _hold("BRIDGE_IDENTITY_ACCOUNTING_INVALID")
+        # A source PASS alone cannot certify a CORE18 symbol that the transport
+        # explicitly DEFERRED. Require the same 18 symbols in the published
+        # identity-accounted, source-ready bridge before returning any PASS.
+        if not set(CORE18).issubset(selected):
+            return _hold("CORE18_BRIDGE_DEFERRED")
         answer = build(source, raw_source)
         if answer.get("status") != "PASS_18OF18_SOURCE_INPUTS_ONLY":
             return answer  # Valid source, but no fabricated CORE18 PASS.
