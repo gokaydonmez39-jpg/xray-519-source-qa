@@ -16,7 +16,7 @@ import re
 import subprocess
 import tempfile
 
-from ops.evidence_ref_pair_audit import audit_pair
+from ops.evidence_ref_pair_audit import PairRejected, audit_pair
 
 EVIDENCE_BRANCH = "xray-source-evidence"
 SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -223,7 +223,7 @@ def main() -> int:
                              evidence_origin=args.evidence_origin,
                              paths=(args.receipt, args.bridge),
                              shadow_source_main=args.shadow_source_main)
-    except (EvidenceBlocked, OSError, subprocess.TimeoutExpired, UnicodeError):
+    except (EvidenceBlocked, PairRejected, OSError, subprocess.TimeoutExpired, UnicodeError):
         print(json.dumps({"status": "HOLD_EVIDENCE_REF_NOT_PUBLISHED",
                           "research_only": True, "orders_sent": 0}))
         return 2
