@@ -89,7 +89,7 @@ jobs:
           OUT="$RUNNER_TEMP/source-receipt.json"
           BRIDGE="$RUNNER_TEMP/private-eligible-source.json.gz"
           if [ "$MODE" = 519 ]; then
-            python3 research_519.py --max-markets "$MODE" --output "$OUT" --bridge-output "$BRIDGE" --pace 0.15
+            python3 research_519.py --max-markets "$MODE" --output "$OUT" --bridge-output "$BRIDGE" --bridge-profile full-quality --pace 0.15
           else
             python3 research_519.py --max-markets "$MODE" --output "$OUT" --pace 0.15
           fi
