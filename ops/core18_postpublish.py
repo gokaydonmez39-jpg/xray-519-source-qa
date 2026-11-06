@@ -83,7 +83,7 @@ def verify_pair_then_project(
         if (type(provenance) is not dict
                 or provenance.get("repository") != REPOSITORY
                 or provenance.get("run_id") != runner_id
-                or provenance.get("run_attempt") != run_attempt
+                or provenance.get("run_attempt") != str(run_attempt)
                 or provenance.get("runner_type") != "GITHUB_HOSTED_STANDARD_PUBLIC"):
             return _hold("PUBLISH_RUNNER_PROVENANCE_MISMATCH")
         source_from_publication = {
