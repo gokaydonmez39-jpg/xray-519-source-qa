@@ -71,7 +71,8 @@ def path_contract(paths: tuple[str, ...]) -> None:
 
 
 def append_pair(*, code_base: str, evidence_origin: str,
-                paths: tuple[str, str], attempts: int = 3) -> dict:
+                paths: tuple[str, str], attempts: int = 3,
+                shadow_source_main: bool = False) -> dict:
     """Run only in a clean Github Actions checkout with two new local files.
 
     Precondition: an authorized administrator initialized evidence branch at
@@ -108,11 +109,22 @@ def append_pair(*, code_base: str, evidence_origin: str,
         next(p for p in paths if p.startswith("receipts/")),
         next(p for p in paths if p.startswith("bridges/")),
     )
+    if type(shadow_source_main) is not bool:
+        raise EvidenceBlocked("INVALID_SHADOW_RELEASE_MODE")
     for _ in range(attempts):
-        # Source code can advance only via independently reviewed main PRs.
-        # A source code update during this scan invalidates the old producer.
+        # In shadow mode, the existing canonical publisher has *already*
+        # appended exactly this pair to main. Verify no executable source
+        # change, missing half-pair, other epoch, or bytes mismatch.
         git("fetch", "--no-tags", "origin", "refs/heads/main")
-        if out("rev-parse", "FETCH_HEAD") != code_base:
+        remote_main = out("rev-parse", "FETCH_HEAD")
+        if shadow_source_main:
+            current = tree(remote_main)
+            changed = {p for p in original.keys() | current.keys()
+                       if original.get(p) != current.get(p)}
+            if (changed != set(paths)
+                    or any(current.get(p) != staged[p] for p in paths)):
+                raise EvidenceBlocked("SHADOW_MAIN_NOT_EXACT_VERIFIED_PAIR")
+        elif remote_main != code_base:
             raise EvidenceBlocked("CODE_MAIN_CHANGED_DURING_SCAN")
         git("fetch", "--no-tags", "origin",
             "refs/heads/" + EVIDENCE_BRANCH)
@@ -170,11 +182,13 @@ def append_pair(*, code_base: str, evidence_origin: str,
             if real != hashlib.sha256(buffers[path]).hexdigest():
                 raise EvidenceBlocked("REMOTE_BYTES_SHA256_MISMATCH")
         git("fetch", "--no-tags", "origin", "refs/heads/main")
-        if out("rev-parse", "FETCH_HEAD") != code_base:
-            raise EvidenceBlocked("CODE_DRIFT_AFTER_READBACK")
+        if out("rev-parse", "FETCH_HEAD") != remote_main:
+            raise EvidenceBlocked("CODE_OR_SOURCE_DRIFT_AFTER_READBACK")
         return {
-            "status": "EVIDENCE_REF_PAIR_DURABLE_READBACK_ONLY",
-            "code_main_unchanged": True,
+            "status": ("SHADOW_EVIDENCE_REF_PAIR_DURABLE_READBACK_NO_LIVE_CONSUMER"
+                       if shadow_source_main else "EVIDENCE_REF_PAIR_DURABLE_READBACK_ONLY"),
+            "code_main_unchanged": not shadow_source_main,
+            "source_main_exact_pair_verified": shadow_source_main,
             "evidence_branch": EVIDENCE_BRANCH,
             "evidence_commit": readback,
             "source_code_sha": code_base,
@@ -193,13 +207,16 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--code-base", required=True)
     p.add_argument("--evidence-origin", required=True)
+    p.add_argument("--shadow-source-main", action="store_true",
+                   help="verify the already-published exact pair on main; never publish to main")
     p.add_argument("receipt")
     p.add_argument("bridge")
     args = p.parse_args()
     try:
         result = append_pair(code_base=args.code_base,
                              evidence_origin=args.evidence_origin,
-                             paths=(args.receipt, args.bridge))
+                             paths=(args.receipt, args.bridge),
+                             shadow_source_main=args.shadow_source_main)
     except (EvidenceBlocked, OSError, subprocess.TimeoutExpired, UnicodeError):
         print(json.dumps({"status": "HOLD_EVIDENCE_REF_NOT_PUBLISHED",
                           "research_only": True, "orders_sent": 0}))
