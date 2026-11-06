@@ -10,6 +10,7 @@ import gzip
 import hashlib
 import json
 import os
+import math
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -90,7 +91,9 @@ def prepare(path: Path, dest_root: Path, *, owner_repo: str, run_id: str,
             raise ReceiptError('TRADE_CANDIDATE_FORBIDDEN')
     nested_schema = {
         'frame_quality': {'1h','4h','1d'},
-        'technical': {'last_closed_price','ema20_1h','ema50_1h','ema20_4h','ema20_1d',
+        'technical': {'last_closed_price','ema20_1h','ema50_1h','ema20_4h',
+                      'ema20_4h_previous','last_closed_price_4h','last10_low_1h',
+                      'ema20_1d',
                       'rsi14_wilder_1h','prev20_high_1h','last_closed_quote_volume_1h',
                       'quote_rvol20_1h','asof_closed_utc_ms'},
         'liquidity_snapshot': {'rolling_24h_quote_usdt','spread_bp',
@@ -103,6 +106,19 @@ def prepare(path: Path, dest_root: Path, *, owner_repo: str, run_id: str,
                 if not isinstance(value, dict) or not set(value).issubset(allowed_fields):
                     raise ReceiptError('UNKNOWN_NESTED_PUBLIC_FIELD')
                 if key == 'technical':
+                    for field in ('ema20_4h_previous','last_closed_price_4h','last10_low_1h'):
+                        if field in value:
+                            number=value[field]
+                            if (type(number) not in (int,float) or not math.isfinite(number)
+                                    or number <= 0):
+                                raise ReceiptError('INVALID_CORE18_CLOSED_BAR_INPUT')
+                    if all(field in value for field in ('ema20_4h','ema20_4h_previous','last_closed_price_4h')):
+                        expected=(19/21)*value['ema20_4h_previous']+(2/21)*value['last_closed_price_4h']
+                        if abs(value['ema20_4h']-expected)>max(1e-9,abs(expected)*1e-12):
+                            raise ReceiptError('CORE18_EMA_RECURRENCE_MISMATCH')
+                    if ('last10_low_1h' in value and 'last_closed_price' in value
+                            and value['last10_low_1h']>value['last_closed_price']):
+                        raise ReceiptError('CORE18_STOP10_CLOSED_BAR_CONTRADICTION')
                     asof=value.get('asof_closed_utc_ms')
                     if not isinstance(asof,dict) or set(asof) != {'1h','4h','1d'}:
                         raise ReceiptError('UNKNOWN_NESTED_PUBLIC_FIELD')
