@@ -183,14 +183,50 @@ def _pair(ref, entries, mode, stamp):
             "scope_digest_sha256", "utc_closed_epoch_1h_ms", "identity_universe"))):
         raise PreflightBlocked("PAIR_HASH_MISMATCH")
     deferred = bridge.get("deferred_symbols")
-    if (type(bridge.get("raw_prefilter_symbols")) is not int or
-        type(bridge.get("exported_symbols")) is not int or
+    exported = bridge.get("exported_symbols")
+    raw_prefilter = bridge.get("raw_prefilter_symbols")
+    if (type(raw_prefilter) is not int or raw_prefilter < 0 or
+        type(exported) is not int or exported < 0 or
         not isinstance(deferred, dict) or
-        bridge["raw_prefilter_symbols"] != bridge["exported_symbols"] + len(deferred) or
         bridge.get("orders_sent") != 0 or
         bridge.get("notifications_sent") != 0 or
         bridge.get("private_strategy_evaluated") != 0 or
         bridge.get("live_al_claim") is not False):
+        raise PreflightBlocked("INVALID_PUBLISHED_EVIDENCE")
+    profile = bridge.get("transport_profile")
+    if profile == "FULL_QUALITY_READY_V2":
+        # A full transport accounts for EVERY source identity. In contrast,
+        # raw_prefilter_symbols counts only the 15m/15bp raw-liquidity subset.
+        # Conflating these independent cardinalities falsely rejects a valid
+        # genuine n518 source pair and breaks the already-published NOOP.
+        rows = receipt.get("results")
+        markets = bridge.get("markets")
+        if (type(bridge.get("transport_ready_count")) is not int or
+            type(bridge.get("transport_deferred_count")) is not int or
+            not isinstance(rows, list) or
+            len(rows) != receipt.get("identity_universe") or
+            not isinstance(markets, dict) or
+            any(not isinstance(row, dict) or
+                not isinstance(row.get("symbol"), str) for row in rows)):
+            raise PreflightBlocked("INVALID_PUBLISHED_EVIDENCE")
+        names = [row["symbol"] for row in rows]
+        selected, held = set(markets), set(deferred)
+        if (len(set(names)) != len(names) or
+            not all(isinstance(sym, str) for sym in selected | held) or
+            selected & held or
+            selected | held != set(names) or
+            bridge["transport_ready_count"] != len(selected) or
+            bridge["transport_deferred_count"] != len(held) or
+            exported != len(selected) or
+            raw_prefilter != sum(
+                row.get("raw_15m_15bp_prefilter") is True for row in rows
+            )):
+            raise PreflightBlocked("INVALID_PUBLISHED_EVIDENCE")
+    elif profile in (None, "PREFILTER_V1"):
+        # Legacy/partial bridge does not account for the full source universe.
+        if raw_prefilter != exported + len(deferred):
+            raise PreflightBlocked("INVALID_PUBLISHED_EVIDENCE")
+    else:
         raise PreflightBlocked("INVALID_PUBLISHED_EVIDENCE")
     return True
 
