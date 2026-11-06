@@ -27,6 +27,14 @@ FOUR_HOUR_MS = 4 * HOUR_MS
 
 def build(report: dict, raw_source: bytes) -> dict:
     """Return one fail-closed public input projection; never emit candidates."""
+    if not isinstance(raw_source, bytes):
+        return {
+            "schema": "XRAY_PUBLIC_CORE18_CLOSED_BAR_INPUTS_V1",
+            "research_only": True, "orders_sent": 0,
+            "notifications_sent": 0, "full_final_start": False,
+            "source_sha256": None, "status": "HOLD",
+            "reason": "SOURCE_RAW_BYTES_REQUIRED", "records": [],
+        }
     safe = {
         "schema": "XRAY_PUBLIC_CORE18_CLOSED_BAR_INPUTS_V1",
         "research_only": True,
