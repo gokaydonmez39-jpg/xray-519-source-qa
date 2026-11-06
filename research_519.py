@@ -186,8 +186,11 @@ def indicators(series: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     data = {
         "last_closed_price": c1[-1], "ema20_1h": ema(c1, 20),
         "ema50_1h": ema(c1, 50), "ema20_4h": ema(c4, 20),
+        "ema20_4h_previous": ema(c4[:-1], 20),
+        "last_closed_price_4h": c4[-1],
         "ema20_1d": ema(cd, 20), "rsi14_wilder_1h": wilder_rsi(c1),
         "prev20_high_1h": max(r['h'] for r in prev),
+        "last10_low_1h": min(r['l'] for r in h1[-10:]),
         "last_closed_quote_volume_1h": q,
         "quote_rvol20_1h": q / avg_quote if avg_quote > 0 else None,
         "asof_closed_utc_ms": {k: v[-1]['close_ms'] for k,v in series.items()},
