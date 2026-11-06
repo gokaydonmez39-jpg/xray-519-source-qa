@@ -48,6 +48,22 @@ class ArchivedRealPublicEvidenceAcceptance(unittest.TestCase):
         self.assertEqual(result["ready"] + result["deferred"], 518)
         self.assertEqual(result["orders_sent"], 0)
 
+    def test_new_real_14z_pair_reconciles_518_identical_scope(self):
+        suffix = "20261106T1400Z-n518.json.gz"
+        rec = "receipts/2026/11/06/" + suffix
+        bridge = "bridges/2026/11/06/" + suffix
+        result = audit_pair(
+            (ROOT / rec).read_bytes(),
+            (ROOT / bridge).read_bytes(),
+            rec, bridge,
+        )
+        self.assertEqual(result["status"],
+                         "PAIR_LOCAL_SOURCE_AND_SCOPE_SHA_PASS_NOT_REMOTE")
+        self.assertEqual(result["identity_symbols"], 518)
+        self.assertEqual(result["ready"] + result["deferred"], 518)
+        self.assertEqual(result["orders_sent"], 0)
+        self.assertFalse(result["full_final_start"])
+
     def test_real_archived_source_digest_tampering_is_refused(self):
         receipt = json.loads(gzip.decompress(self.public_receipt))
         receipt["source_receipt_sha256"] = "0" * 64
