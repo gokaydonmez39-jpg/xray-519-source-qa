@@ -117,3 +117,16 @@ jobs:
             python3 publish_git.py --base "$SCAN_BASE" --branch "$GITHUB_REF_NAME" "$FILE"
           fi
           python3 verify_remote_pair.py
+          # Secondary create-only proof on a separate evidence branch.
+          # No extra scan, scheduled job, private ref switch, or Sheets write.
+          # Failure in this unused shadow ref cannot veto primary source.
+          if [ "$MODE" = 519 ]; then
+            if python3 -m ops.evidence_ref_publisher \
+              --code-base "$SCAN_BASE" \
+              --evidence-origin "c0dd934f418956141697022505d7ce99112eab6f" \
+              --shadow-source-main "$FILE" "$BFILE"; then
+              printf '%s\n' 'EVIDENCE_SHADOW_REMOTE_PAIR_PASS_NOT_PRIVATE_DELIVERY'
+            else
+              printf '%s\n' 'EVIDENCE_SHADOW_HOLD_PRIMARY_SOURCE_UNCHANGED'
+            fi
+          fi
