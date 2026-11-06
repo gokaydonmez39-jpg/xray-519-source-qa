@@ -12,13 +12,14 @@ import io
 import json
 import re
 
+from bridge_519 import _safe_symbol as source_safe_symbol
+
 REPO = "gokaydonmez39-jpg/xray-519-source-qa"
 SOURCE_CAP = 2_500_000
 BRIDGE_CAP = 24 * 1024 * 1024
 RECEIPT_GZIP_CAP = 200_000
 BRIDGE_GZIP_CAP = 8 * 1024 * 1024
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
-SAFE_SYMBOL = re.compile(r"[A-Z0-9]{2,60}USDT\Z")
 
 
 class PairRejected(ValueError):
@@ -109,7 +110,7 @@ def audit_pair(receipt_blob: bytes, bridge_blob: bytes,
     for row in source_rows:
         if (type(row) is not dict or
                 type(row.get("symbol")) is not str or
-                not SAFE_SYMBOL.fullmatch(row["symbol"]) or
+                not source_safe_symbol(row["symbol"]) or
                 row.get("buy_candidate") is not False or
                 row.get("orders_sent") != 0 or
                 row.get("notifications_sent") != 0):
