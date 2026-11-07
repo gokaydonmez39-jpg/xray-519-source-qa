@@ -147,5 +147,21 @@ class FlowShadowTests(unittest.TestCase):
         self.assertEqual(main(["module", "/missing/no-public-bridge.gz"]), 2)
 
 
+    def test_immutable_real_bridge_20261107_1800z(self):
+        """Real source readback from already committed public blob; no Binance call."""
+        root = Path(__file__).resolve().parents[1]
+        path = root / "bridges/2026/11/07/20261107T1800Z-n518.json.gz"
+        self.assertTrue(path.is_file(), "LIVE_BRIDGE_FIXTURE_MISSING")
+        output = read_gzip(path)
+        self.assertEqual(output["identity_symbols"], 518)
+        self.assertEqual(output["ready_symbols"], 469)
+        self.assertEqual(output["deferred_symbols"], 49)
+        self.assertEqual(sum(output["taker_flow_20h_counts"].values()), 469)
+        self.assertTrue(output["complete_bar_validation"])
+        self.assertFalse(output["al_authority"])
+        self.assertFalse(output["orders_permitted"])
+        self.assertEqual(output["bridge_file_sha256"], hashlib.sha256(path.read_bytes()).hexdigest())
+
+
 if __name__ == "__main__":
     unittest.main()
