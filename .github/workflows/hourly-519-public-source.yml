@@ -103,6 +103,10 @@ jobs:
           if [ "$MODE" = 519 ]; then
             # Optional source diagnostics; never veto a verified primary source if log-only fails.
             python3 -m ops.bridge_reason_summary "$BRIDGE" || printf '%s\n' 'PUBLIC_DEFERRED_REASON_SUMMARY_HOLD_NONVETO'
+            # Hummingbot v2.17 methods only: verify already-captured closed bars and
+            # taker quote flow, no WSS, no network, no strategy and no new expense.
+            # A research diagnostic HOLD never overrides the canonical source gate.
+            python3 -m ops.hummingbot_public_flow_shadow "$BRIDGE" || printf '%s\n' 'HUMMINGBOT_PUBLIC_FLOW_SHADOW_HOLD_NONVETO'
             mapfile -t BDETAILS < <(python3 publish_bridge.py --bridge "$BRIDGE" --receipt "$OUT")
             if [ "${#BDETAILS[@]}" -ne 2 ]; then exit 2; fi
             BFILE="${BDETAILS[0]}"
