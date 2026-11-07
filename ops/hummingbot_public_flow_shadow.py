@@ -15,6 +15,8 @@ from pathlib import Path
 import re
 import sys
 
+from bridge_519 import _safe_symbol
+
 SCHEMA = "XRAY_HUMMINGBOT_METHOD_FLOW_SHADOW_V1"
 BRIDGE_SCHEMA = "XRAY_PUBLIC_PRIVATE_CLOSED_BAR_BRIDGE_V1"
 FRAMES = {"1h": (3_600_000, 100), "4h": (14_400_000, 70), "1d": (86_400_000, 60)}
@@ -126,7 +128,7 @@ def summarize(document: object, *, bridge_file_sha256: str) -> dict:
     net_delta_quote = 0.0
     total_quote = 0.0
     for symbol, info in markets.items():
-        if not isinstance(symbol, str) or not re.fullmatch(r"[A-Z0-9]{1,60}USDT", symbol):
+        if not _safe_symbol(symbol):
             raise SourceHold("BAD_SYMBOL")
         if not isinstance(info, dict) or set(info) != {"frames", "liquidity_snapshot"}:
             raise SourceHold("BAD_MARKET_OBJECT")
