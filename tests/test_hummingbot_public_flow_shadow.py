@@ -147,6 +147,17 @@ class FlowShadowTests(unittest.TestCase):
         self.assertEqual(main(["module", "/missing/no-public-bridge.gz"]), 2)
 
 
+    def test_shared_canonical_source_symbol_contract(self):
+        """Reject unsafe symbols but do not reject existing bridge-valid names."""
+        valid = self.fixture()
+        valid["markets"]["FOO-BARUSDT"] = valid["markets"].pop("ASSET0USDT")
+        output = summarize(valid, bridge_file_sha256="3" * 64)
+        self.assertEqual(output["ready_symbols"], 1)
+        invalid = self.fixture()
+        invalid["markets"]["FOO/USDT"] = invalid["markets"].pop("ASSET0USDT")
+        with self.assertRaises(SourceHold):
+            summarize(invalid, bridge_file_sha256="3" * 64)
+
     def test_immutable_real_bridge_20261107_1800z(self):
         """Real source readback from already committed public blob; no Binance call."""
         root = Path(__file__).resolve().parents[1]
