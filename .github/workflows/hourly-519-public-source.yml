@@ -101,6 +101,8 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           if [ "$MODE" = 519 ]; then
+            # Optional source diagnostics; never veto a verified primary source if log-only fails.
+            python3 -m ops.bridge_reason_summary "$BRIDGE" || printf '%s\n' 'PUBLIC_DEFERRED_REASON_SUMMARY_HOLD_NONVETO'
             mapfile -t BDETAILS < <(python3 publish_bridge.py --bridge "$BRIDGE" --receipt "$OUT")
             if [ "${#BDETAILS[@]}" -ne 2 ]; then exit 2; fi
             BFILE="${BDETAILS[0]}"
