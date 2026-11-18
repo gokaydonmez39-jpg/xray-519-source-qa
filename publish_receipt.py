@@ -13,6 +13,8 @@ import os
 from pathlib import Path
 from datetime import datetime, timezone
 
+from research_519 import FULL_SCOPE_MIN, FULL_SCOPE_MAX, FULL_SCOPE_MODE
+
 MAX_ARCHIVE_BYTES = 200_000
 ALLOWED_LIMITS = (250, 400, 519)
 
@@ -30,6 +32,15 @@ def prepare(path: Path, dest_root: Path, *, owner_repo: str, run_id: str,
     if mode not in ('250','400','519'):
         raise ReceiptError('BAD_MODE')
     data = json.loads(path.read_text(encoding='utf-8'))
+    if not isinstance(data, dict):
+        raise ReceiptError('SOURCE_EVIDENCE_GATE_FAILED:INVALID_DOCUMENT')
+    identity_count = data.get('identity_universe')
+    if type(identity_count) is not int or not 1 <= identity_count <= FULL_SCOPE_MAX:
+        raise ReceiptError('SOURCE_EVIDENCE_GATE_FAILED:INVALID_IDENTITY_COUNT')
+    full_mode = mode == str(FULL_SCOPE_MODE)
+    if full_mode and identity_count < FULL_SCOPE_MIN:
+        raise ReceiptError('UNSUPPORTED_FULL_SCOPE_CHANGE')
+    required_count = identity_count if full_mode else min(identity_count, int(mode))
     checks = (
         data.get('schema') == 'XRAY_519_SOURCE_TECH_RESEARCH_V1',
         data.get('source') == 'BINANCE_PUBLIC_SPOT_REST',
@@ -47,14 +58,13 @@ def prepare(path: Path, dest_root: Path, *, owner_repo: str, run_id: str,
         data.get('phone_delivery_ack') is False,
         type(data.get('requests')) is int and 0 < data['requests'] <= 1700,
         type(data.get('duration_seconds')) in (int,float) and 0 <= data['duration_seconds'] <= 720,
-        type(data.get('identity_universe')) is int and 0 < data['identity_universe'] <= 564,
-        data.get('markets_selected') == min(data.get('identity_universe',0), int(mode)),
+        data.get('markets_selected') == required_count,
         data.get('technical_scanned') == data.get('markets_selected'),
         data.get('technical_frames_requested') == 3*data.get('markets_selected',-1),
         data.get('technical_pass',-1)+data.get('technical_warmup',-1)+data.get('technical_failed',-1) == data.get('markets_selected'),
         data.get('technical_failed') == 0,
         data.get('rank_ticker_missing_or_invalid') == 0,
-        data.get('complete_identity_scope') is (data.get('identity_universe') <= int(mode)),
+        data.get('complete_identity_scope') is (identity_count == required_count),
         isinstance(data.get('results'),list) and len(data['results']) == data['markets_selected'],
     )
     if not all(checks):
@@ -67,11 +77,8 @@ def prepare(path: Path, dest_root: Path, *, owner_repo: str, run_id: str,
     # Full-mode output is keyed by the *observed* active SPOT identity scope.
     # Never claim n519 when Binance currently supplies 518 valid markets.
     # Pilot modes retain their requested 250/400 filename contract.
-    if mode == '519':
-        observed = data['identity_universe']
-        if observed < 401 or observed > 564 or data['markets_selected'] != observed:
-            raise ReceiptError('UNSUPPORTED_FULL_SCOPE_CHANGE')
-        suffix = str(observed)
+    if full_mode:
+        suffix = str(identity_count)
     else:
         suffix = mode
     rel=Path('receipts')/day.strftime('%Y')/day.strftime('%m')/day.strftime('%d')/(stamp+'-n'+suffix+'.json.gz')
