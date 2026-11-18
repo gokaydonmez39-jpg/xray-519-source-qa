@@ -31,6 +31,8 @@ COUNTS = {"1h": 100, "4h": 40, "1d": 40}
 SCHEMA = "XRAY_519_SOURCE_TECH_RESEARCH_V1"
 MAX_REQUESTS = 1700
 MAX_SECONDS = 720.0
+FULL_SCOPE_MODE = 519  # Legacy workflow selector, not a market-count limit.
+FULL_SCOPE_MIN, FULL_SCOPE_MAX = 401, 564
 BASE_URL = "https://data-api.binance.vision"
 ALLOWED_PATHS = frozenset({"/api/v3/time", "/api/v3/exchangeInfo",
                             "/api/v3/ticker/24hr", "/api/v3/ticker/bookTicker",
@@ -300,6 +302,12 @@ def scan(provider: Any, *, max_markets: int | None = None,
     raw_scope = provider.get('/api/v3/exchangeInfo', {'showPermissionSets': 'false'})
     scope, digest = instrument_scope(raw_scope)
     identity_count = len(scope)
+    full_bridge_mode = (
+        max_markets == FULL_SCOPE_MODE and bridge_sink is not None and bridge_sink.full_scope
+    )
+    if full_bridge_mode and not FULL_SCOPE_MIN <= identity_count <= FULL_SCOPE_MAX:
+        raise FatalSourceError("FULL_SCOPE_OUTSIDE_ACCEPTED_RANGE")
+    selection_limit = None if full_bridge_mode else max_markets
     ticks = _ticker_map(provider.get('/api/v3/ticker/24hr'), [r['symbol'] for r in scope])
     books = _ticker_map(provider.get('/api/v3/ticker/bookTicker'), [r['symbol'] for r in scope])
     rank_volumes = {}
@@ -313,10 +321,10 @@ def scan(provider: Any, *, max_markets: int | None = None,
         except QualityError:
             rank_invalid += 1
             rank_volumes[row['symbol']] = -1.0
-    if max_markets is not None and max_markets < identity_count and rank_invalid:
+    if selection_limit is not None and selection_limit < identity_count and rank_invalid:
         raise QualityError('INCOMPLETE_VOLUME_RANKING')
     scope.sort(key=lambda row: (-rank_volumes[row['symbol']], row['symbol'].encode('utf-8')))
-    chosen = scope[:max_markets] if max_markets is not None else scope
+    chosen = scope[:selection_limit] if selection_limit is not None else scope
     counts = Counter()
     results = []
     deadlines = {interval:closed_epoch(start_ms, period) for interval,period in PERIODS.items()}
@@ -458,8 +466,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     if args.pace < 0.15:
         ap.error('production pace cannot be less than 0.15 seconds')
-    if args.bridge_output is not None and args.max_markets != 519:
-        ap.error('bridge requires complete 519-identity scope and does not support partial scans')
+    if args.bridge_output is not None and args.max_markets != FULL_SCOPE_MODE:
+        ap.error('bridge requires the full-mode selector 519, not a pilot scan')
     if args.bridge_output is not None and args.bridge_output == args.output:
         ap.error('bridge must never overwrite source receipt')
     if args.bridge_profile == 'full-quality' and args.bridge_output is None:
