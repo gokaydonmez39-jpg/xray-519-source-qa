@@ -56,8 +56,8 @@ jobs:
           from datetime import datetime, timezone, timedelta
           from pathlib import Path
           from ops.evidence_collector import collect, fetch_github_run, EvidenceError
-          from ops.cloudflare_source_provenance import fetch_verified, ProvenanceError
-          from ops.versioned_scope_acceptance import collect_shadow, EvidenceHold
+          from ops.cloudflare_source_provenance import compare_fixed_window, fetch_verified, ProvenanceError
+          from ops.versioned_scope_acceptance import collect_shadow, read_pair, EvidenceHold
 
           event = os.environ.get("XRAY_EVENT_NAME", "")
           now = datetime.now(timezone.utc)
@@ -121,6 +121,19 @@ jobs:
           report["cloudflare_deduplicated_invocations"] = cloudflare_counts
           print("XRAY519_EVIDENCE_CONTROLLER_REPORT=" +
                 json.dumps(report,sort_keys=True,separators=(",",":")))
+          # One natural publication only. Historical Cloudflare lookup does not replay Source.
+          if (event == "workflow_run" and stamp == "20261119T1600Z" and
+                  now < datetime(2026, 11, 19, 16, 40, tzinfo=timezone.utc) and
+                  run.get("run_attempt") == 1 and run.get("conclusion") == "success" and
+                  cf_account and cf_token):
+              try:
+                  published = read_pair(Path("."), stamp)
+              except (EvidenceHold, OSError):
+                  published = {}
+              if published.get("run_id") == run.get("id") and published.get("run_attempt") == 1:
+                  print("XRAY_CF_FIXED_WINDOW_COMPARISON=" +
+                        json.dumps(compare_fixed_window(cf_account, cf_token),
+                                   sort_keys=True, separators=(",", ":")))
           current = report["diagnostics"].get(stamp, [])
           current_dynamic = dynamic["diagnostics"].get(stamp)
           with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a",encoding="utf-8") as out:

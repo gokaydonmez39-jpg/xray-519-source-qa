@@ -6,7 +6,8 @@ from datetime import datetime, timezone, timedelta
 from urllib.error import HTTPError
 from ops.cloudflare_source_provenance import (
     MAX_EVENTS, SCRIPT, ProvenanceError, end_epoch, query_body,
-    prove, from_query_response, fetch_verified,
+    prove, from_query_response, fetch_verified, compare_fixed_window,
+    COMPARISON_EPOCH, COMPARISON_RUN,
 )
 
 END = "20261101T2100Z"
@@ -370,6 +371,70 @@ class OriginObservationTests(unittest.TestCase):
         self.assertEqual(summary["raw_log_rows"], 2)
         self.assertEqual(summary["origin_observation"]["current_epoch_reason"],
                          "ACCEPTED_DISPATCH_LOG_WITHOUT_EXACT_RUN_ID")
+
+
+
+class FixedWindowComparisonTests(unittest.TestCase):
+    def fixtures(self):
+        h = int(end_epoch(COMPARISON_EPOCH).timestamp()*1000)
+        root = event_root(stamp_ms=h+70_000)
+        reply = event_do(run_id=COMPARISON_RUN, stamp=COMPARISON_EPOCH, stamp_ms=h+71_000)
+        return h, [root, reply]
+
+    def test_same_cutoff_two_dry_reads_exact_run_only_as_diagnostic(self):
+        h, rows = self.fixtures()
+        calls = []
+        def transport(req, timeout):
+            body = json.loads(req.data)
+            self.assertEqual(timeout, 12)
+            self.assertTrue(body["dry"])
+            calls.append(body)
+            events = [] if len(calls) == 1 else rows
+            return io.BytesIO(json.dumps({"success": True, "result": {
+                "run": {"status": "COMPLETED", "timeframe": body["timeframe"]},
+                "statistics": {"abr_level": 4 if not events else 1},
+                "events": {"count": len(events), "events": events}}}).encode())
+        result = compare_fixed_window("a"*32, "test-token-"*3, transport)
+        self.assertEqual(len(calls), 2)
+        a, b = calls
+        self.assertEqual(a.pop("timeframe"), {"from": h-47*3600000, "to": h+600000})
+        self.assertEqual(b.pop("timeframe"), {"from": h-3000000, "to": h+600000})
+        self.assertEqual(a, b)
+        self.assertFalse(result["release_authority"])
+        self.assertFalse(result["wide"]["exact_expected_run"])
+        self.assertTrue(result["one_hour"]["exact_expected_run"])
+        self.assertEqual(result["wide"]["query_abr_level"], 4)
+        self.assertEqual(result["one_hour"]["target_rows"], 2)
+        self.assertNotIn(str(COMPARISON_RUN), json.dumps(result))
+        self.assertNotIn(TRACE, json.dumps(result))
+
+    def test_mismatched_echo_and_truncation_cannot_be_observed(self):
+        _, rows = self.fixtures()
+        calls = []
+        def transport(req, timeout):
+            body = json.loads(req.data)
+            calls.append(body)
+            return io.BytesIO(json.dumps({"success": True, "result": {
+                "run": {"status": "COMPLETED", "timeframe": {"from": 0, "to": 1}},
+                "events": {"count": 3 if len(calls)==1 else 2, "events": rows}}}).encode())
+        r = compare_fixed_window("a"*32, "test-token-"*3, transport)
+        self.assertEqual(r["wide"]["status"], "CLOUDFLARE_QUERY_TRUNCATED")
+        self.assertEqual(r["one_hour"]["status"], "TIMEFRAME_ECHO_MISMATCH")
+        self.assertFalse(r["release_authority"])
+
+    def test_transport_failure_is_sanitized_and_other_query_still_runs(self):
+        calls = []
+        def transport(req, timeout):
+            calls.append(req)
+            if len(calls)==1:
+                raise OSError("do not disclose exact credential or response")
+            return io.BytesIO(b'{"success":true,"result":{"run":{"status":"COMPLETED"},"events":{"count":0,"events":[]}}}')
+        result = compare_fixed_window("a"*32, "test-token-"*3, transport)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result["wide"]["status"], "CLOUDFLARE_QUERY_TRANSPORT_FAILED")
+        self.assertEqual(result["one_hour"]["timeframe_echo"], "NOT_RETURNED")
+        self.assertFalse(result["one_hour"]["exact_expected_run"])
+        self.assertFalse(result["release_authority"])
 
 
 if __name__=="__main__":
