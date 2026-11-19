@@ -296,5 +296,81 @@ class ProofTests(unittest.TestCase):
         self.assertNotIn(token,called[0][2])
         self.assertEqual(called[0][3],12)
 
+
+class OriginObservationTests(unittest.TestCase):
+    def measure(self, records, stamp=STAMP):
+        payload = {"success": True, "result": {"run": {"status": "COMPLETED"},
+                   "events": {"events": records, "count": len(records)}}}
+        proof, diag = from_query_response(payload, stamp, include_diagnostics=True)
+        self.assertEqual(proof, from_query_response(payload, stamp))
+        self.assertEqual(diag["schema"], "XRAY_CLOUDFLARE_ORIGIN_OBSERVATION_V1")
+        self.assertEqual(diag["queried_epoch_count"], 48)
+        self.assertNotIn(TRACE, json.dumps(diag))
+        self.assertNotIn(str(RUN), json.dumps(diag))
+        return proof, diag
+
+    def test_current_correlation_is_still_exact(self):
+        proof, observed = self.measure([event_root(), event_do()])
+        self.assertEqual(proof, {STAMP: RUN})
+        self.assertEqual(observed["current_epoch_reason"], "EXACT_CLOUDFLARE_RUN_PROOF_OBSERVED")
+        self.assertEqual(observed["epochs_with_exact_correlation"], 1)
+
+    def test_successful_query_is_not_evidence_of_a_scheduled_log(self):
+        proof, observed = self.measure([event_root(), event_do()], END)
+        self.assertEqual(proof, {STAMP: RUN})
+        self.assertEqual(observed["epochs_with_observed_scheduled_log"], 1)
+        self.assertEqual(observed["current_epoch_reason"], "NO_SCHEDULED_LOG_FOR_EPOCH_IN_QUERY")
+
+    def test_missing_parent_decision_and_legacy_204_are_separate(self):
+        for records, reason in [
+            ([event_root(outcome="exception")], "NO_UNAMBIGUOUS_ELIGIBLE_SCHEDULED_ROOT"),
+            ([event_root(), event_do(trace="1"*32)], "NO_SAME_TRACE_DISPATCH_LOG_IN_QUERY"),
+            ([event_root(), event_do(decision="EXISTING_SOURCE_RUN")],
+             "NO_SAME_EPOCH_ACCEPTED_DISPATCH_LOG_IN_QUERY"),
+            ([event_root(), event_do(run_id=None)], "ACCEPTED_DISPATCH_LOG_WITHOUT_EXACT_RUN_ID"),
+        ]:
+            with self.subTest(reason=reason):
+                proof, observed = self.measure(records)
+                self.assertEqual(proof, {})
+                self.assertEqual(observed["current_epoch_reason"], reason)
+
+    def test_version_clock_conflict_and_malformed_log_cannot_authorize(self):
+        malformed = event_do()
+        malformed.pop("timestamp")
+        odd = event_do()
+        odd["$workers"]["scriptVersion"] = []
+        for records, reason in [
+            ([event_root(), event_do(version="b"*36)], "ACCEPTED_DISPATCH_VERSION_OR_CLOCK_NOT_PROVEN"),
+            ([event_root(), event_do(stamp_ms=EPOCH_MS+240_000)], "ACCEPTED_DISPATCH_VERSION_OR_CLOCK_NOT_PROVEN"),
+            ([event_root(), event_do(), event_do(run_id=RUN+1)], "CONFLICTING_CLOUDFLARE_RUN_IDS"),
+            ([event_root(), malformed], "NO_SAME_TRACE_DISPATCH_LOG_IN_QUERY"),
+            ([event_root(), odd], "ACCEPTED_DISPATCH_VERSION_OR_CLOCK_NOT_PROVEN"),
+        ]:
+            with self.subTest(reason=reason):
+                proof, observed = self.measure(records)
+                self.assertEqual(proof, {})
+                self.assertEqual(observed["current_epoch_reason"], reason)
+
+    def test_summary_retains_one_dry_query_and_exposes_only_aggregates(self):
+        class Response(io.BytesIO):
+            pass
+        events = [event_root(), event_do(run_id=None)]
+        body = {"success":True,"result":{"run":{"status":"COMPLETED"},
+                "events":{"events":events,"count":len(events)}}}
+        calls = []
+        def send(request, timeout):
+            calls.append(json.loads(request.data))
+            self.assertEqual(timeout, 12)
+            return Response(json.dumps(body).encode())
+        proof, summary = fetch_verified(STAMP, "a"*32, "not-a-real-token-"*3,
+                                        transport=send, include_summary=True)
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(calls[0]["dry"])
+        self.assertEqual(proof, {})
+        self.assertEqual(summary["raw_log_rows"], 2)
+        self.assertEqual(summary["origin_observation"]["current_epoch_reason"],
+                         "ACCEPTED_DISPATCH_LOG_WITHOUT_EXACT_RUN_ID")
+
+
 if __name__=="__main__":
     unittest.main()
