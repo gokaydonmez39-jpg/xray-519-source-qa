@@ -47,6 +47,24 @@ jobs:
         with:
           persist-credentials: true
           fetch-depth: 1
+          # Keep the full Git tree and all receipts for pilot progression,
+          # but materialize only the historical bridge fixtures used by tests.
+          # Other bridge objects remain addressable by exact Git ref on demand.
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !/*/
+            /.github/
+            /ops/
+            /research_lab/
+            /tests/
+            /receipts/
+            /bridges/2026/11/03/20261103T1000Z-n518.json.gz
+            /bridges/2026/11/06/20261106T1200Z-n518.json.gz
+            /bridges/2026/11/06/20261106T1300Z-n518.json.gz
+            /bridges/2026/11/06/20261106T1400Z-n518.json.gz
+            /bridges/2026/11/06/20261106T1500Z-n518.json.gz
+            /bridges/2026/11/07/20261107T1800Z-n518.json.gz
       - name: Run security regression tests
         run: |
           set -euo pipefail
@@ -112,9 +130,9 @@ jobs:
             BFILE="${BDETAILS[0]}"
             BEXPECTED="${BDETAILS[1]}"
             test -f "$BFILE"
-            git add -- "$FILE" "$BFILE"
+            git add --sparse -- "$FILE" "$BFILE"
           else
-            git add -- "$FILE"
+            git add --sparse -- "$FILE"
           fi
           git commit -m "research: append immutable $MODE closed-bar receipt [skip ci]"
           if [ "$MODE" = 519 ]; then

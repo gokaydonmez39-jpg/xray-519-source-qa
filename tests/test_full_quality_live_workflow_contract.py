@@ -35,7 +35,7 @@ class FullQualityWorkflowReleaseGate(unittest.TestCase):
     def test_source_records_remain_immutable_and_mirror_verified(self):
         self.assertIn("python3 -m ops.source_preflight", self.raw)
         self.assertIn('SOURCE_ALREADY_PUBLISHED_NO_SCAN_NOT_NEW_SOURCE_PASS', self.raw)
-        self.assertIn('git add -- "$FILE" "$BFILE"', self.raw)
+        self.assertIn('git add --sparse -- "$FILE" "$BFILE"', self.raw)
         self.assertIn('python3 publish_git.py --base "$SCAN_BASE"', self.raw)
         self.assertIn('python3 verify_remote_pair.py', self.raw)
         self.assertIn("SOURCE_PREFLIGHT_BLOCKED", self.raw)
