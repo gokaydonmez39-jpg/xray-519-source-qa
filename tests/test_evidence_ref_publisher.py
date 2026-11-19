@@ -151,6 +151,41 @@ class EvidenceRefShadowIntegrationTests(unittest.TestCase):
         self.assertEqual(first["evidence_commit"], second["evidence_commit"])
         self.assertEqual(self._remote_branch("main"), self.local_head)
 
+    def test_shadow_partial_checkout_does_not_hydrate_old_evidence_blobs(self):
+        previous = "bridges/2026/11/06/20261106T1200Z-n518.json.gz"
+        run("checkout","-b","old-evidence",EVIDENCE_BRANCH)
+        cold = self.work / previous
+        cold.parent.mkdir(parents=True,exist_ok=True)
+        cold.write_bytes(b"distinct cold archive fixture")
+        run("add",previous)
+        run("commit","-m","old create-only evidence")
+        cold_sha=run("rev-parse","HEAD:"+previous)
+        run("push","origin","HEAD:"+EVIDENCE_BRANCH)
+        run("checkout","--detach",self.local_head)
+        run("push","origin","HEAD:main")
+        run("--git-dir",self.remote,"config","uploadpack.allowFilter","true")
+        run("--git-dir",self.remote,"config","uploadpack.allowReachableSHA1InWant","true")
+        thin=self.work.parent/"thin"
+        run("clone","--no-checkout","--filter=blob:none","--depth=2",
+            "--branch","main","--no-single-branch",self.remote.as_uri(),thin)
+        try:
+            os.chdir(thin)
+            run("config","user.name","Local QA")
+            run("config","user.email","qa@example.invalid")
+            run("sparse-checkout","set","--no-cone","README.md")
+            run("checkout","main")
+            run("fetch","--no-tags","origin","refs/heads/"+EVIDENCE_BRANCH)
+            ref="refs/remotes/origin/"+EVIDENCE_BRANCH
+            self.assertIn("?"+cold_sha,run("rev-list","--objects","--missing=print",ref))
+            result=append_pair(code_base=self.origin,evidence_origin=self.origin,
+                               paths=self.paths,shadow_source_main=True)
+            self.assertEqual(result["status"],"SHADOW_EVIDENCE_REF_PAIR_DURABLE_READBACK_NO_LIVE_CONSUMER")
+            self.assertIn("?"+cold_sha,run("rev-list","--objects","--missing=print",ref))
+            self.assertEqual(run("--git-dir",self.remote,"rev-parse","refs/heads/"+EVIDENCE_BRANCH+":"+previous),cold_sha)
+            self.assertEqual(self._remote_branch("main"),self.local_head)
+        finally:
+            os.chdir(self.work)
+
     def test_shadow_rejects_unexpected_main_source_code_change(self):
         (self.work / "README.md").write_text("unapproved new code\n")
         run("add", "README.md")

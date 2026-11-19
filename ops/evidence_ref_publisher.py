@@ -154,13 +154,22 @@ def append_pair(*, code_base: str, evidence_origin: str,
                 raise EvidenceBlocked("IMMUTABLE_EPOCH_COLLISION")
             committed = remote  # lost acknowledgment, exact bytes already live
         else:
+            # This remote's old tree may contain blobs intentionally omitted
+            # by the live partial checkout. Only already read and audited
+            # local blobs are added. Preserve normal Git validation otherwise.
+            promisor = git("config","--bool","--get","remote.origin.promisor",check=False)
+            blob_filter = git("config","--get","remote.origin.partialclonefilter",check=False)
+            use_promised = (promisor.returncode == blob_filter.returncode == 0
+                            and promisor.stdout.strip() == b"true"
+                            and blob_filter.stdout.strip() == b"blob:none")
             with tempfile.TemporaryDirectory(prefix="xray-evref-index-") as tmp:
                 idx = dict(os.environ, GIT_INDEX_FILE=str(Path(tmp) / "index"))
                 git("read-tree", remote, env=idx)
                 for path in paths:
                     git("update-index", "--add", "--cacheinfo",
                         "100644", staged[path][2], path, env=idx)
-                newtree = git("write-tree", env=idx).stdout.decode().strip()
+                write_options = ("--missing-ok",) if use_promised else ()
+                newtree = git("write-tree", *write_options, env=idx).stdout.decode().strip()
             committed = git(
                 "commit-tree", newtree, "-p", remote,
                 stdin=b"research: create-only evidence-ref pair [skip ci]\n"
