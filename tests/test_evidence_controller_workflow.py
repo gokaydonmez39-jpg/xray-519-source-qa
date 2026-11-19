@@ -50,6 +50,9 @@ class ControllerWorkflowContractTests(unittest.TestCase):
         ast.parse(code)
         self.assertIn("fetch_github_run",code)
         self.assertIn("collect(",code)
+        self.assertIn("collect_shadow(",code)
+        self.assertIn('report["versioned_scope_shadow"] = dynamic',code)
+        self.assertIn('raise EvidenceHold("RUN_METADATA_UNAVAILABLE")',code)
         self.assertIn('GITHUB_STEP_SUMMARY',code)
         self.assertIn('FULL FINAL START: **HOLD**',code)
 
@@ -74,6 +77,12 @@ class ControllerWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("SOURCE_DISPATCH_LOCK",text)
         self.assertNotIn("GITHUB_OUTPUT",text)
         self.assertIn("XRAY519_READONLY_EVIDENCE_AUDIT_RECORDED",text)
+
+    def test_legacy_absence_does_not_raise_versioned_failure(self):
+        self.assertIn('if event == "schedule" and dynamic["paired_authenticated_hours"] == 0:',
+                      self.content)
+        self.assertIn("XRAY legacy n519 evidence",self.content)
+        self.assertIn("Current versioned universe",self.content)
 
 
 if __name__=="__main__":

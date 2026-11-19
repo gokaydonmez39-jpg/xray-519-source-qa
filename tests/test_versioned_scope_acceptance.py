@@ -9,6 +9,7 @@ import tempfile
 import unittest
 
 from ops import versioned_scope_acceptance as a
+from ops import evidence_collector as legacy
 
 STAMP = "20261103T1000Z"
 
@@ -60,6 +61,24 @@ def write(root, n=518, stamp=STAMP, run_id=12345, pair=None):
     return rp,bp
 
 
+def full_quality(n=525, stamp=STAMP, run_id=12345):
+    source, bridge = sample(n,stamp,run_id)
+    begin = int(a._epoch(stamp).timestamp()*1000) + 60_000
+    source.update(start_server_ms=begin, end_server_ms=begin+240_000)
+    for i,row in enumerate(source["results"]):
+        row["raw_15m_15bp_prefilter"] = i < 2
+    source["source_receipt_sha256"]=hashlib.sha256(canon({
+        k:v for k,v in source.items() if k not in ("public_runner","source_receipt_sha256")
+    })).hexdigest()
+    ready={r["symbol"]:{} for r in source["results"] if r["technical_data_quality"]=="PASS"}
+    deferred={r["symbol"]:"WARMUP" for r in source["results"] if r["symbol"] not in ready}
+    bridge.update(source=source["source"],source_receipt_sha256=source["source_receipt_sha256"],
+        source_start_server_ms=begin, source_end_server_ms=begin+240_000,
+        transport_profile="FULL_QUALITY_READY_V2",markets=ready,deferred_symbols=deferred,
+        exported_symbols=len(ready),transport_ready_count=len(ready),transport_deferred_count=len(deferred))
+    return source,bridge
+
+
 def run(pair, event="schedule"):
     return {"id":pair["run_id"],"workflow_id":a.WORKFLOW_ID,"name":a.WORKFLOW_NAME,
             "run_attempt":pair["run_attempt"],"head_branch":"main",
@@ -82,6 +101,52 @@ class ScopeReaderTests(unittest.TestCase):
     def test_legacy_519_does_not_need_mutation(self):
         write(self.root,n=519)
         self.assertEqual(a.read_pair(self.root,STAMP)["scope_count"],519)
+
+    def test_525_full_quality_preserves_origin_and_stays_non_authorizing(self):
+        write(self.root,n=525,pair=full_quality())
+        with self.assertRaisesRegex(legacy.EvidenceError,"MISSING_OR_UNSAFE_PAIR"):
+            legacy.read_pair(self.root,STAMP)
+        pair=a.read_pair(self.root,STAMP)
+        fake_metadata=run(pair,"workflow_dispatch")
+        unknown=a.collect_shadow(self.root,STAMP,lambda rid:fake_metadata)
+        self.assertEqual(unknown["current_epoch_scope_count"],525)
+        self.assertEqual(unknown["diagnostics"][STAMP],"ORIGIN_HOLD")
+        self.assertEqual(unknown["trusted_origin_hours"],0)
+        signed=a.collect_shadow(self.root,STAMP,lambda rid:fake_metadata,
+                                cloudflare_proof={STAMP:pair["run_id"]})
+        self.assertEqual(signed["current_epoch_origin"],"cloudflare_cron_trace_exact_run")
+        self.assertEqual(signed["trusted_origin_hours"],1)
+        self.assertFalse(signed["full_final_start"])
+        self.assertFalse(signed["alert_release"])
+
+    def test_525_full_quality_wrong_source_clock_is_rejected(self):
+        r,b=full_quality()
+        b["source_end_server_ms"]+=1
+        write(self.root,n=525,pair=(r,b))
+        with self.assertRaisesRegex(a.EvidenceHold,"FULL_QUALITY_SOURCE_TIME_MISMATCH"):
+            a.read_pair(self.root,STAMP)
+
+    def test_525_full_quality_grafted_symbol_and_bad_raw_prefilter_rejected(self):
+        for wrong in ("graft","raw"):
+            with self.subTest(wrong=wrong):
+                r,b=full_quality()
+                if wrong=="graft":
+                    sym=next(iter(b["markets"]))
+                    b["markets"]["UNSEENUSDT"]=b["markets"].pop(sym)
+                else:
+                    b["raw_prefilter_symbols"]=525
+                write(self.root,n=525,pair=(r,b))
+                with self.assertRaisesRegex(a.EvidenceHold,"FULL_QUALITY_SCOPE_ACCOUNTING_INVALID"):
+                    a.read_pair(self.root,STAMP)
+
+    def test_pair_and_origin_error_are_held_separately(self):
+        write(self.root,n=525,pair=full_quality())
+        def denied(_):
+            raise a.EvidenceHold("RUN_METADATA_UNAVAILABLE")
+        value=a.collect_shadow(self.root,STAMP,denied)
+        self.assertIsNone(value["current_epoch_scope_count"])
+        self.assertEqual(value["diagnostics"][STAMP],"RUN_METADATA_UNAVAILABLE")
+        self.assertEqual(value["trusted_origin_hours"],0)
 
     def test_mixed_scope_conflict_fails_closed(self):
         write(self.root,n=518)

@@ -162,11 +162,37 @@ def read_pair(root, stamp):
             ("scope_digest_sha256", "identity_universe", "utc_closed_epoch_1h_ms"))):
         raise EvidenceHold("CANONICAL_PAIR_HASH_MISMATCH")
     deferred = bridge.get("deferred_symbols")
-    if (type(bridge.get("raw_prefilter_symbols")) is not int or
-        type(bridge.get("exported_symbols")) is not int or
-        not isinstance(deferred, dict) or
-        bridge["raw_prefilter_symbols"] != bridge["exported_symbols"] + len(deferred)):
+    raw_prefilter = bridge.get("raw_prefilter_symbols")
+    exported = bridge.get("exported_symbols")
+    if (type(raw_prefilter) is not int or type(exported) is not int or
+        not 0 <= raw_prefilter <= n or not 0 <= exported <= n or
+        not isinstance(deferred, dict)):
         raise EvidenceHold("BRIDGE_ACCOUNTING_INVALID")
+    profile = bridge.get("transport_profile")
+    if profile == "FULL_QUALITY_READY_V2":
+        markets = bridge.get("markets")
+        begin, finish = receipt.get("start_server_ms"), receipt.get("end_server_ms")
+        if (bridge.get("source") != receipt.get("source") or
+            type(begin) is not int or type(finish) is not int or
+            not close_ms + 6_000 <= begin <= finish <= close_ms + 900_001 or
+            bridge.get("source_start_server_ms") != begin or
+            bridge.get("source_end_server_ms") != finish):
+            raise EvidenceHold("FULL_QUALITY_SOURCE_TIME_MISMATCH")
+        if (not isinstance(markets, dict) or
+            type(bridge.get("transport_ready_count")) is not int or
+            type(bridge.get("transport_deferred_count")) is not int or
+            set(markets) & set(deferred) or set(markets) | set(deferred) != symbols or
+            exported != len(markets) or bridge["transport_ready_count"] != len(markets) or
+            bridge["transport_deferred_count"] != len(deferred) or
+            any(not isinstance(reason, (str, dict)) or not reason for reason in deferred.values()) or
+            any(row["symbol"] in markets and row["technical_data_quality"] != "PASS" for row in rows) or
+            raw_prefilter != sum(row.get("raw_15m_15bp_prefilter") is True for row in rows)):
+            raise EvidenceHold("FULL_QUALITY_SCOPE_ACCOUNTING_INVALID")
+    elif profile in (None, "PREFILTER_V1"):
+        if raw_prefilter != exported + len(deferred):
+            raise EvidenceHold("BRIDGE_ACCOUNTING_INVALID")
+    else:
+        raise EvidenceHold("BRIDGE_PROFILE_UNRECOGNIZED")
     return {"stamp": stamp, "scope_count": n, "scope_digest_sha256": digest,
             "scope_version": f"{n}:{digest}", "run_id": int(runner["run_id"]),
             "run_attempt": int(runner["run_attempt"]), "technical_pass": counters[0],
@@ -221,12 +247,16 @@ def collect_shadow(root, end_stamp, run_lookup, *, cloudflare_proof=None):
             else:
                 origin_count += 1
             verified.append({"stamp": stamp, "scope_version": pair["scope_version"],
+                             "scope_count": pair["scope_count"],
                              "origin": event, "technical_pass": pair["technical_pass"],
                              "technical_warmup": pair["technical_warmup"]})
             if not versions or versions[-1]["scope_version"] != pair["scope_version"]:
                 versions.append({"from_stamp": stamp, "scope_version": pair["scope_version"]})
         except EvidenceHold as exc:
             diagnostics[stamp] = str(exc)
+        except OSError:
+            diagnostics[stamp] = "PAIR_LOCAL_READ_FAILED"
+    current = next((x for x in reversed(verified) if x["stamp"] == end_stamp), None)
     return {"schema": "XRAY_PUBLIC_SCOPE_VERSION_SHADOW_V1",
             "status": "SHADOW_ONLY_NOT_RELEASE_AUTHORITY",
             "end_stamp": end_stamp, "required_distinct_utc_hours": HOURS,
@@ -234,6 +264,8 @@ def collect_shadow(root, end_stamp, run_lookup, *, cloudflare_proof=None):
             "trusted_origin_hours": origin_count,
             "warmup_present_hours": sum(r["technical_warmup"] > 0 for r in verified),
             "scope_versions": versions, "diagnostics": diagnostics,
+            "current_epoch_scope_count": current["scope_count"] if current else None,
+            "current_epoch_origin": current["origin"] if current else None,
             "shadow_complete_48h": len(verified) == HOURS and origin_count == HOURS,
             "legacy_519_contract_unchanged": True,
             "full_final_start": False, "alert_release": False,
