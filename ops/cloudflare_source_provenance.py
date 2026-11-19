@@ -83,11 +83,12 @@ def _log_payload(event):
     return None
 
 def _version(event):
-    worker = event.get("$workers") or {}
-    v = (worker.get("scriptVersion") or {}).get("id")
+    worker = event.get("$workers")
+    version = worker.get("scriptVersion") if isinstance(worker, dict) else None
+    v = version.get("id") if isinstance(version, dict) else None
     return v if isinstance(v, str) and VERSION_RE.fullmatch(v) else None
 
-def prove(events, end_stamp):
+def _proof_with_diagnostics(events, end_stamp):
     """Require scheduled invocation + DO dispatch log, same trace/version/hour.
 
     No console-line count is ever treated as number of failed source hours.
@@ -100,6 +101,8 @@ def prove(events, end_stamp):
     if not isinstance(events, list) or len(events) > MAX_EVENTS:
         raise ProvenanceError("CLOUDFLARE_EVENT_RANGE_INVALID")
     roots = {}
+    observed_hours = set()
+    current_hour_ms = int(end.timestamp()*1000)
     for ev in events:
         if not isinstance(ev, dict):
             raise ProvenanceError("CLOUDFLARE_EVENT_INVALID")
@@ -116,20 +119,27 @@ def prove(events, end_stamp):
             continue
         if meta.get("type") != "cf-worker-event" or worker.get("eventType") != "scheduled":
             continue
-        if worker.get("outcome") != "ok":
+        trigger = worker.get("event")
+        cron = trigger.get("cron") if isinstance(trigger, dict) else None
+        if not isinstance(cron, str) or cron not in ALLOWED_CRONS:
             continue
-        cron = (worker.get("event") or {}).get("cron")
-        if cron not in ALLOWED_CRONS:
+        hour_ms = (stamp_ms // 3_600_000) * 3_600_000
+        observed_hours.add(hour_ms)
+        if worker.get("outcome") != "ok":
             continue
         version = _version(ev)
         if not version:
             continue
-        hour_ms = (stamp_ms // 3_600_000) * 3_600_000
         if not ALLOWED_CRONS[cron] <= stamp_ms - hour_ms <= ALLOWED_CRONS[cron] + 90_000:
             continue
         epoch = datetime.fromtimestamp(hour_ms/1000,timezone.utc).strftime("%Y%m%dT%H00Z")
         # A trace may only bind to one scheduled invocation.
         roots.setdefault(trace, set()).add((epoch, version, stamp_ms))
+    current_roots = {trace: links for trace, links in roots.items()
+                     if len(links) == 1 and next(iter(links))[0] == end_stamp}
+    current_parent_logs = 0
+    current_accepted_logs = 0
+    current_without_run_id = 0
     candidates = {}
     conflicts = set()
     for ev in events:
@@ -143,20 +153,30 @@ def prove(events, end_stamp):
         if meta.get("type") not in ("cf-worker", "cf-worker-log"):
             continue
         trace = meta.get("traceId")
+        at_ms = ev.get("timestamp")
+        if not isinstance(trace, str) or type(at_ms) is not int or not low <= at_ms < high:
+            continue
         root = roots.get(trace, set())
         if len(root) != 1:
             continue
         payload = _log_payload(ev)
+        current_trace = trace in current_roots
+        if current_trace:
+            current_parent_logs += 1
         if not payload or payload.get("decision") != "DISPATCH_ACCEPTED_NOT_SOURCE_PASS":
             continue
         stamp, run_id = payload.get("stamp"), payload.get("runId")
         if not isinstance(stamp, str) or not STAMP_RE.fullmatch(stamp):
             continue
+        if current_trace and stamp == end_stamp:
+            current_accepted_logs += 1
         if type(run_id) is not int or run_id <= 0:
+            if current_trace and stamp == end_stamp:
+                current_without_run_id += 1
             continue
         version = _version(ev)
         if not version or not any(ep == stamp and ver == version and
-                abs(stamp_ms - ev["timestamp"]) <= 60_000
+                abs(stamp_ms - at_ms) <= 60_000
                 for ep, ver, stamp_ms in root):
             continue
         if stamp in candidates and candidates[stamp] != run_id:
@@ -165,9 +185,35 @@ def prove(events, end_stamp):
             candidates[stamp] = run_id
     for stamp in conflicts:
         candidates.pop(stamp, None)
-    return candidates
+    if end_stamp in candidates:
+        reason = "EXACT_CLOUDFLARE_RUN_PROOF_OBSERVED"
+    elif end_stamp in conflicts:
+        reason = "CONFLICTING_CLOUDFLARE_RUN_IDS"
+    elif current_hour_ms not in observed_hours:
+        reason = "NO_SCHEDULED_LOG_FOR_EPOCH_IN_QUERY"
+    elif not current_roots:
+        reason = "NO_UNAMBIGUOUS_ELIGIBLE_SCHEDULED_ROOT"
+    elif current_parent_logs == 0:
+        reason = "NO_SAME_TRACE_DISPATCH_LOG_IN_QUERY"
+    elif current_accepted_logs == 0:
+        reason = "NO_SAME_EPOCH_ACCEPTED_DISPATCH_LOG_IN_QUERY"
+    elif current_without_run_id == current_accepted_logs:
+        reason = "ACCEPTED_DISPATCH_LOG_WITHOUT_EXACT_RUN_ID"
+    else:
+        reason = "ACCEPTED_DISPATCH_VERSION_OR_CLOCK_NOT_PROVEN"
+    diagnostics = {
+        "schema": "XRAY_CLOUDFLARE_ORIGIN_OBSERVATION_V1",
+        "queried_epoch_count": 48,
+        "epochs_with_observed_scheduled_log": len(observed_hours),
+        "epochs_with_exact_correlation": len(candidates),
+        "current_epoch_reason": reason,
+    }
+    return candidates, diagnostics
 
-def from_query_response(payload, end_stamp):
+def prove(events, end_stamp):
+    return _proof_with_diagnostics(events, end_stamp)[0]
+
+def from_query_response(payload, end_stamp, *, include_diagnostics=False):
     if not isinstance(payload, dict) or payload.get("success") is not True:
         raise ProvenanceError("CLOUDFLARE_QUERY_FAILED")
     result = payload.get("result")
@@ -186,7 +232,8 @@ def from_query_response(payload, end_stamp):
         raise ProvenanceError("CLOUDFLARE_QUERY_INCOMPLETE")
     if count != len(records) or count >= MAX_EVENTS:
         raise ProvenanceError("CLOUDFLARE_QUERY_TRUNCATED")
-    return prove(records, end_stamp)
+    result = _proof_with_diagnostics(records, end_stamp)
+    return result if include_diagnostics else result[0]
 
 HANDLED_DUPLICATE_STATES = frozenset({
     "DISPATCH_ACCEPTED_NOT_SOURCE_PASS",
@@ -231,8 +278,9 @@ def summarize_invocations(events, end_stamp):
             continue
         group=groups.setdefault(tid,{"root":[],"logs":[]})
         if m.get("type")=="cf-worker-event" and w.get("eventType")=="scheduled":
-            cron=(w.get("event") or {}).get("cron")
-            if cron in ALLOWED_CRONS:
+            trigger=w.get("event")
+            cron=trigger.get("cron") if isinstance(trigger,dict) else None
+            if isinstance(cron,str) and cron in ALLOWED_CRONS:
                 group["root"].append({"cron":cron,"outcome":w.get("outcome"),"timestamp":at})
         elif m.get("type") in ("cf-worker", "cf-worker-log"):
             p=_log_payload(e)
@@ -304,7 +352,9 @@ def fetch_verified(end_stamp, account_id, token, transport=None, include_summary
         if isinstance(exc, ProvenanceError):
             raise
         raise ProvenanceError("CLOUDFLARE_QUERY_TRANSPORT_FAILED") from None
-    proof = from_query_response(payload, end_stamp)
-    if include_summary:
-        return proof, summarize_invocations(payload["result"]["events"]["events"], end_stamp)
-    return proof
+    if not include_summary:
+        return from_query_response(payload, end_stamp)
+    proof, diagnostics = from_query_response(payload, end_stamp, include_diagnostics=True)
+    summary = summarize_invocations(payload["result"]["events"]["events"], end_stamp)
+    summary["origin_observation"] = diagnostics
+    return proof, summary
