@@ -55,8 +55,9 @@ jobs:
           import sys
           from datetime import datetime, timezone, timedelta
           from pathlib import Path
-          from ops.evidence_collector import collect, fetch_github_run
+          from ops.evidence_collector import collect, fetch_github_run, EvidenceError
           from ops.cloudflare_source_provenance import fetch_verified, ProvenanceError
+          from ops.versioned_scope_acceptance import collect_shadow, EvidenceHold
 
           event = os.environ.get("XRAY_EVENT_NAME", "")
           now = datetime.now(timezone.utc)
@@ -93,19 +94,44 @@ jobs:
               except ProvenanceError:
                   # No exception body or credential is ever printed.
                   cloudflare_status = "CLOUDFLARE_QUERY_HOLD"
-          report = collect(Path("."), stamp,
-                           lambda rid: fetch_github_run(rid, token),
-                           cloudflare_proof=cloudflare_proof)
+          run_cache = {}
+          def lookup(rid):
+              if rid not in run_cache:
+                  try:
+                      run_cache[rid] = fetch_github_run(rid, token)
+                  except EvidenceError as exc:
+                      run_cache[rid] = exc
+              value = run_cache[rid]
+              if isinstance(value, EvidenceError):
+                  raise value
+              return value
+
+          def lookup_dynamic(rid):
+              try:
+                  return lookup(rid)
+              except EvidenceError as exc:
+                  raise EvidenceHold("RUN_METADATA_UNAVAILABLE") from exc
+
+          # The original strict 519 contract remains a distinct, non-authorizing lane.
+          report = collect(Path("."), stamp, lookup, cloudflare_proof=cloudflare_proof)
+          dynamic = collect_shadow(Path("."), stamp, lookup_dynamic,
+                                   cloudflare_proof=cloudflare_proof)
+          report["versioned_scope_shadow"] = dynamic
           report["cloudflare_query_status"] = cloudflare_status
           report["cloudflare_deduplicated_invocations"] = cloudflare_counts
           print("XRAY519_EVIDENCE_CONTROLLER_REPORT=" +
                 json.dumps(report,sort_keys=True,separators=(",",":")))
           current = report["diagnostics"].get(stamp, [])
+          current_dynamic = dynamic["diagnostics"].get(stamp)
           with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a",encoding="utf-8") as out:
               out.write("## XRAY-519 public read-only evidence control\n\n")
               out.write(f"- UTC epoch inspected: `{stamp}`\n")
-              out.write(f"- Raw receipt+bridge and GitHub run pairs: `{report['pair_and_run_verified_count']}/48`\n")
-              out.write(f"- Trusted-origin source epochs: `{report['fully_qualified_source_hours']}/48`\n")
+              out.write(f"- Legacy n519 exact pairs: `{report['pair_and_run_verified_count']}/48`\n")
+              out.write(f"- Legacy n519 trusted-origin epochs: `{report['fully_qualified_source_hours']}/48`\n")
+              out.write(f"- Versioned scope exact pairs (diagnostic only): `{dynamic['paired_authenticated_hours']}/48`\n")
+              out.write(f"- Versioned scope trusted-origin epochs: `{dynamic['trusted_origin_hours']}/48`\n")
+              out.write(f"- Current versioned universe: `{dynamic['current_epoch_scope_count']}`\n")
+              out.write(f"- Current versioned diagnosis: `{current_dynamic or 'NONE'}`\n")
               out.write(f"- Cloudflare-origin exact-run matches: `{report['cloudflare_origin_verified_hours']}/48`\n")
               out.write(f"- Cloudflare API status: `{cloudflare_status}`\n")
               if cloudflare_counts:
@@ -119,12 +145,13 @@ jobs:
               out.write(f"- Current epoch diagnostic codes: `{','.join(current) if current else 'NONE'}`\n")
               out.write("- No market requests, no source trigger, no orders, no lock changes.\n")
           if current:
-              print("::warning title=XRAY source-origin/evidence HOLD::" +
-                    ",".join(current))
+              print("::notice title=XRAY legacy n519 evidence::" + ",".join(current))
+          if current_dynamic:
+              print("::warning title=XRAY versioned-scope evidence HOLD::" + current_dynamic)
           # A newly missing or invalid source pair after a completed
           # scheduled check is an operational incident. Github run failures
           # are a diagnostic, not a repair authorization.
-          if event == "schedule" and report["pair_and_run_verified_count"] == 0:
+          if event == "schedule" and dynamic["paired_authenticated_hours"] == 0:
               print("XRAY519_EVIDENCE_ALERT_NO_VERIFIED_PAIRS")
               # If no 48h archive exists yet, this remains an independent
               # warning; true source acceptance is never declared.
