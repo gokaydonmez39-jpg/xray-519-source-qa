@@ -95,12 +95,22 @@ def publish(base, branch, paths, attempts=3):
             committed = remote  # Lost push acknowledgement: exact pair already exists.
         else:
             # A private index builds a commit on remote HEAD; worktree/index stay untouched.
+            # In the pinned partial checkout, unchanged blobs are promised by this
+            # same remote. Default write-tree would fetch the entire old archive.
+            # Every added blob was already read, hashed and size-checked above.
+            # Keep the default existence check for non-promisor worktrees.
+            promisor = git('config', '--bool', '--get', 'remote.origin.promisor', check=False)
+            blob_filter = git('config', '--get', 'remote.origin.partialclonefilter', check=False)
+            allow_promised = (promisor.returncode == blob_filter.returncode == 0
+                              and promisor.stdout.strip() == b'true'
+                              and blob_filter.stdout.strip() == b'blob:none')
             with tempfile.TemporaryDirectory(prefix='xray-publish-') as tmp:
                 env = dict(os.environ, GIT_INDEX_FILE=str(Path(tmp) / 'index'))
                 git('read-tree', remote, env=env)
                 for p in paths:
                     git('update-index', '--add', '--cacheinfo', '100644', generated[p][2], p, env=env)
-                new_tree = git('write-tree', env=env).stdout.decode().strip()
+                write_tree_args = ('--missing-ok',) if allow_promised else ()
+                new_tree = git('write-tree', *write_tree_args, env=env).stdout.decode().strip()
             committed = git('commit-tree', new_tree, '-p', remote,
                             data=b'research: append immutable source evidence [skip ci]\n').stdout.decode().strip()
             pushed = git('push', 'origin', committed + ':refs/heads/main', check=False)
