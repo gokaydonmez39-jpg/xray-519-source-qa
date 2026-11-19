@@ -321,7 +321,7 @@ def summarize_invocations(events, end_stamp):
         "unclassified_holds":statuses.count("UNKNOWN"),
     }
 
-def fetch_verified(end_stamp, account_id, token, transport=None, include_summary=False):
+def _fetch_dry_query(query, account_id, token, transport=None):
     """Only POST query, never write Worker code, data, schedules or secrets.
 
     Token and response bodies are never included in failures or printed.
@@ -332,7 +332,9 @@ def fetch_verified(end_stamp, account_id, token, transport=None, include_summary
     if not (isinstance(account_id, str) and re.fullmatch(r"[a-f0-9]{32}", account_id)
             and isinstance(token, str) and len(token) >= 20):
         raise ProvenanceError("CLOUDFLARE_READ_CREDENTIALS_MISSING")
-    body = json.dumps(query_body(end_stamp), separators=(",", ":")).encode()
+    if query.get("dry") is not True:
+        raise ProvenanceError("CLOUDFLARE_NON_DRY_QUERY_BLOCKED")
+    body = json.dumps(query, separators=(",", ":")).encode()
     req = urllib.request.Request(
         "https://api.cloudflare.com/client/v4/accounts/" + account_id +
         "/workers/observability/telemetry/query",
@@ -352,9 +354,64 @@ def fetch_verified(end_stamp, account_id, token, transport=None, include_summary
         if isinstance(exc, ProvenanceError):
             raise
         raise ProvenanceError("CLOUDFLARE_QUERY_TRANSPORT_FAILED") from None
+    return payload
+
+def fetch_verified(end_stamp, account_id, token, transport=None, include_summary=False):
+    payload = _fetch_dry_query(query_body(end_stamp), account_id, token, transport)
     if not include_summary:
         return from_query_response(payload, end_stamp)
     proof, diagnostics = from_query_response(payload, end_stamp, include_diagnostics=True)
     summary = summarize_invocations(payload["result"]["events"]["events"], end_stamp)
     summary["origin_observation"] = diagnostics
     return proof, summary
+
+# Diagnostic-only comparison. Fixed historical evidence; never used by a gate.
+COMPARISON_EPOCH = "20261119T1400Z"
+COMPARISON_RUN = 44539384391
+
+def compare_fixed_window(account_id, token, transport=None):
+    """Same filter/cutoff, two bounded dry reads. Publish only sanitized counters."""
+    h = int(end_epoch(COMPARISON_EPOCH).timestamp()*1000)
+    out = {"schema": "XRAY_CF_FIXED_WINDOW_COMPARISON_V1",
+           "stamp": COMPARISON_EPOCH, "release_authority": False}
+    for label in ("wide", "one_hour"):
+        query = query_body(COMPARISON_EPOCH)
+        query["queryId"] = "xray-519-fixed-window-diagnostic-v1"
+        if label == "one_hour":
+            query["timeframe"]["from"] = query["timeframe"]["to"] - 3_600_000
+        frame = query["timeframe"]
+        try:
+            payload = _fetch_dry_query(query, account_id, token, transport)
+            proof, diag = from_query_response(payload, COMPARISON_EPOCH, include_diagnostics=True)
+        except ProvenanceError as exc:
+            code = str(exc)
+            out[label] = {"status": code if re.fullmatch(r"[A-Z_]{1,90}", code)
+                          else "CLOUDFLARE_DIAGNOSTIC_FAILED"}
+            continue
+        result = payload["result"]
+        echoed = result["run"].get("timeframe")
+        echo = "NOT_RETURNED"
+        if echoed is not None:
+            echo = "MATCHED" if echoed == frame else "MISMATCH"
+        rows = result["events"]["events"]
+        if any(type(r.get("timestamp")) is not int or
+               not frame["from"] <= r["timestamp"] < frame["to"] for r in rows):
+            out[label] = {"status": "RETURNED_ROWS_OUTSIDE_REQUEST_WINDOW"}
+            continue
+        stats = result.get("statistics")
+        if not isinstance(stats, dict):
+            stats = result["run"].get("statistics")
+        if not isinstance(stats, dict):
+            stats = {}
+        abr = stats.get("abr_level")
+        if type(abr) not in (int, float) or not 0 <= abr <= 1_000_000_000:
+            abr = None
+        match = proof.get(COMPARISON_EPOCH)
+        out[label] = {"status": "OBSERVED" if echo != "MISMATCH" else "TIMEFRAME_ECHO_MISMATCH",
+                      "timeframe_echo": echo, "total_rows": len(rows),
+                      "target_rows": sum(h <= r["timestamp"] < frame["to"] for r in rows),
+                      "origin_reason": diag["current_epoch_reason"],
+                      "exact_expected_run": match == COMPARISON_RUN,
+                      "other_run_returned": match is not None and match != COMPARISON_RUN,
+                      "query_abr_level": abr}
+    return out
