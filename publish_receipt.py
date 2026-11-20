@@ -87,14 +87,40 @@ def prepare(path: Path, dest_root: Path, *, owner_repo: str, run_id: str,
         raise ReceiptError('DUPLICATE_RECEIPT_REFUSED')
     # Avoid accidentally publishing future private strategy payloads.
     public_keys={'schema','source','run_kind','http_provider_used','live_source_acceptance','start_server_ms','end_server_ms','utc_closed_epoch_1h_ms','identity_universe','markets_selected','rank_ticker_missing_or_invalid','technical_scanned','technical_frames_requested','technical_pass','technical_warmup','technical_failed','status_accounting_ok','scope_digest_sha256','receipt_key','scope_stable','epoch_stable','complete_identity_scope','full_technical_quality','source_qa_success','orders_sent','notifications_sent','private_strategy_evaluated','live_al_claim','native_wss_running','phone_delivery_ack','requests','duration_seconds','results'}
-    if set(data) != public_keys:
+    session_fields = {'session_quarantine_count', 'session_quarantine_under_cap'}
+    new_session_schema = set(data) == public_keys | session_fields
+    if set(data) != public_keys and not new_session_schema:
         raise ReceiptError('UNKNOWN_TOP_LEVEL_FIELDS_STOP_PUBLICATION')
-    public_result_keys={'symbol','identity','research_only','buy_candidate','orders_sent','notifications_sent','frame_quality','technical_data_quality','reason','technical','liquidity_snapshot','raw_15m_15bp_prefilter','liquidity_quality'}
+    public_result_keys={'symbol','identity','research_only','buy_candidate','orders_sent','notifications_sent','frame_quality','technical_data_quality','reason','technical','liquidity_snapshot','raw_15m_15bp_prefilter','liquidity_quality','session_quarantined'}
     for row in data['results']:
         if not isinstance(row,dict) or not set(row).issubset(public_result_keys):
             raise ReceiptError('UNKNOWN_RESULT_FIELD_STOP_PUBLICATION')
         if row.get('orders_sent') != 0 or row.get('notifications_sent') != 0 or row.get('buy_candidate') is not False:
             raise ReceiptError('TRADE_CANDIDATE_FORBIDDEN')
+    # Session-limited Spot markets remain named and fully counted, but cannot
+    # enter any technical or AL path. Old receipt contracts remain compatible.
+    session_rows = [row for row in data['results']
+                    if row.get('session_quarantined') is True]
+    if any('session_quarantined' in row and
+           row['session_quarantined'] is not True for row in data['results']):
+        raise ReceiptError('INVALID_SESSION_QUARANTINE_FLAG')
+    if new_session_schema:
+        n = data.get('session_quarantine_count')
+        if (type(n) is not int or not 0 <= n <= 2
+                or data.get('session_quarantine_under_cap') is not True
+                or len(session_rows) != n):
+            raise ReceiptError('SESSION_QUARANTINE_COUNT_MISMATCH')
+    elif session_rows:
+        raise ReceiptError('SESSION_QUARANTINE_UNDECLARED')
+    for row in session_rows:
+        if (row.get('technical_data_quality') != 'WARMUP'
+                or row.get('reason') != 'SESSION_TRUNCATED_CANDLE_REVIEW_NO_SIGNAL'
+                or 'technical' in row
+                or row.get('frame_quality') != {
+                    '1h': 'WARMUP_NONCONTINUOUS_SPOT_SESSION',
+                    '4h': 'WARMUP_NONCONTINUOUS_SPOT_SESSION',
+                    '1d': 'PASS'}):
+            raise ReceiptError('SESSION_QUARANTINE_CANNOT_SCORE_OR_HIDE_FRAME')
     nested_schema = {
         'frame_quality': {'1h','4h','1d'},
         'technical': {'last_closed_price','ema20_1h','ema50_1h','ema20_4h','ema20_1d',
