@@ -420,6 +420,9 @@ def scan(provider: Any, *, max_markets: int | None = None,
       "requests":getattr(provider,'requests',None),"duration_seconds":round(duration,3),
       "results":results
     }
+    if report['source_qa_success'] is not True:
+        print(json.dumps(source_acceptance_diagnostics(report), ensure_ascii=False,
+                         sort_keys=True), file=sys.stderr)
     if bridge_sink is not None:
         bridge_sink.finish(report)
     return report
@@ -513,9 +516,6 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps({'event':'SOURCE_TRANSPORT', 'transport':type(provider.opener).__name__}),file=sys.stderr)
     try:
         report = scan(provider,max_markets=args.max_markets,bridge_sink=bridge_sink)
-        if report['source_qa_success'] is not True:
-            print(json.dumps(source_acceptance_diagnostics(report), ensure_ascii=False,
-                             sort_keys=True), file=sys.stderr)
         if report['duration_seconds'] > MAX_SECONDS or report['requests'] > MAX_REQUESTS:
             raise FatalSourceError('END_OF_RUN_BUDGET_EXCEEDED')
         atomic_json(args.output, report)
