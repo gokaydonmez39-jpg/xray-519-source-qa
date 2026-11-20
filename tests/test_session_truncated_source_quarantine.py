@@ -96,9 +96,11 @@ class SourceSessionQuarantineTests(unittest.TestCase):
             self.assertEqual(len(digest), 64)
             tampered = dict(packed, session_quarantine_count=0)
             source.write_text(json.dumps(tampered, allow_nan=False), encoding='utf-8')
-            with self.assertRaisesRegex(ReceiptError, 'SESSION_QUARANTINE_COUNT_MISMATCH'):
-                prepare(source, root, owner_repo='gokaydonmez39-jpg/xray-519-source-qa',
-                        run_id='199', run_attempt='1', mode='519')
+            with tempfile.TemporaryDirectory() as rejected:
+                with self.assertRaisesRegex(ReceiptError, 'SESSION_QUARANTINE_COUNT_MISMATCH'):
+                    prepare(source, Path(rejected),
+                            owner_repo='gokaydonmez39-jpg/xray-519-source-qa',
+                            run_id='199', run_attempt='1', mode='519')
 
     def test_more_than_two_session_anomalies_fail_closed(self):
         provider = self._provider({'AAA0001USDT','AAA0002USDT','AAA0003USDT'})
