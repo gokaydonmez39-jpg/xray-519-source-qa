@@ -68,8 +68,43 @@ jobs:
       - name: Run security regression tests
         run: |
           set -euo pipefail
-          python3 -m unittest discover -s tests -q
-          python3 -O -m unittest discover -s tests -q
+          # Keep BOTH independent suites mandatory; do not alter admission.
+          xray_regression_dir="$(mktemp -d "$RUNNER_TEMP/xray-regression.XXXXXXXX")"
+          xray_normal_pid=
+          xray_optimized_pid=
+          xray_cleanup() {
+            if [[ -n "$xray_normal_pid" ]]; then
+              kill "$xray_normal_pid" 2>/dev/null || true
+              wait "$xray_normal_pid" 2>/dev/null || true
+            fi
+            if [[ -n "$xray_optimized_pid" ]]; then
+              kill "$xray_optimized_pid" 2>/dev/null || true
+              wait "$xray_optimized_pid" 2>/dev/null || true
+            fi
+            rm -rf -- "$xray_regression_dir"
+          }
+          trap xray_cleanup EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          mkdir -p "$xray_regression_dir/normal-tmp" "$xray_regression_dir/optimized-tmp"
+          TMPDIR="$xray_regression_dir/normal-tmp" python3 -m unittest discover -s tests -q >"$xray_regression_dir/normal.log" 2>&1 &
+          xray_normal_pid=$!
+          TMPDIR="$xray_regression_dir/optimized-tmp" python3 -O -m unittest discover -s tests -q >"$xray_regression_dir/optimized.log" 2>&1 &
+          xray_optimized_pid=$!
+          xray_normal_status=0
+          xray_optimized_status=0
+          wait "$xray_normal_pid" || xray_normal_status=$?
+          xray_normal_pid=
+          wait "$xray_optimized_pid" || xray_optimized_status=$?
+          xray_optimized_pid=
+          printf 'XRAY_SOURCE_GUARD normal exit=%s\n' "$xray_normal_status"
+          cat "$xray_regression_dir/normal.log"
+          printf 'XRAY_SOURCE_GUARD optimized exit=%s\n' "$xray_optimized_status"
+          cat "$xray_regression_dir/optimized.log"
+          if [[ "$xray_normal_status" != 0 || "$xray_optimized_status" != 0 ]]; then
+            printf '%s\n' 'XRAY_SOURCE_SECURITY_REGRESSION_HOLD'
+            exit 2
+          fi
       - name: Read-only Binance scan, immutable receipt and independent readback
         shell: bash
         env:
