@@ -505,6 +505,8 @@ def source_acceptance_diagnostics(report: dict[str, Any]) -> dict[str, Any]:
         "complete_identity_scope": report.get("complete_identity_scope") is True,
         "technical_failed": report.get("technical_failed"),
         "technical_warmup": report.get("technical_warmup"),
+        "session_quarantine_count": report.get("session_quarantine_count"),
+        "session_quarantine_under_cap": report.get("session_quarantine_under_cap"),
         "technical_pass": report.get("technical_pass"),
         "identity_universe": report.get("identity_universe"),
         "markets_selected": report.get("markets_selected"),
