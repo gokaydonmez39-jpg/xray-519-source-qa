@@ -4,10 +4,14 @@ Uses deterministic synthetic public Spot fixtures; no trading or network.
 """
 import contextlib
 import io
+import json
+from pathlib import Path
+import tempfile
 import unittest
 
 import research_519 as r
 from bridge_519 import BridgeCollector, BridgeError
+from publish_receipt import ReceiptError, prepare
 from test_source import NOW, Provider
 
 
@@ -75,6 +79,24 @@ class SourceSessionQuarantineTests(unittest.TestCase):
         self.assertIn('AAA0001USDT', bridge.document['deferred_symbols'])
         self.assertEqual(report['orders_sent'], 0)
         self.assertEqual(report['notifications_sent'], 0)
+        # Validate the *actual public receipt publisher*, not merely scan().
+        # The synthetic provider flag is set to True only inside this test
+        # fixture to exercise the source packaging contract without network.
+        packed = dict(report, http_provider_used=True)
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            source = root/'research.json'
+            source.write_text(json.dumps(packed, allow_nan=False), encoding='utf-8')
+            relative, digest = prepare(
+                source, root, owner_repo='gokaydonmez39-jpg/xray-519-source-qa',
+                run_id='199', run_attempt='1', mode='519')
+            self.assertTrue((root/relative).is_file())
+            self.assertEqual(len(digest), 64)
+            tampered = dict(packed, session_quarantine_count=0)
+            source.write_text(json.dumps(tampered, allow_nan=False), encoding='utf-8')
+            with self.assertRaisesRegex(ReceiptError, 'SESSION_QUARANTINE_COUNT_MISMATCH'):
+                prepare(source, root, owner_repo='gokaydonmez39-jpg/xray-519-source-qa',
+                        run_id='199', run_attempt='1', mode='519')
 
     def test_more_than_two_session_anomalies_fail_closed(self):
         provider = self._provider({'AAA0001USDT','AAA0002USDT','AAA0003USDT'})
