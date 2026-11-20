@@ -117,8 +117,8 @@ def prepare(path: Path, dest_root: Path, *, owner_repo: str, run_id: str,
                 or row.get('reason') != 'SESSION_TRUNCATED_CANDLE_REVIEW_NO_SIGNAL'
                 or 'technical' in row
                 or row.get('frame_quality') != {
-                    '1h': 'FAIL_INVALID_PERIOD_ALIGNMENT',
-                    '4h': 'FAIL_INVALID_PERIOD_ALIGNMENT',
+                    '1h': 'WARMUP_NONCONTINUOUS_SPOT_SESSION',
+                    '4h': 'WARMUP_NONCONTINUOUS_SPOT_SESSION',
                     '1d': 'PASS'}):
             raise ReceiptError('SESSION_QUARANTINE_CANNOT_SCORE_OR_HIDE_FRAME')
     nested_schema = {
