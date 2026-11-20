@@ -71,6 +71,8 @@ class SourceSessionQuarantineTests(unittest.TestCase):
         row = next(x for x in report['results'] if x['symbol']=='AAA0001USDT')
         self.assertTrue(row['session_quarantined'])
         self.assertEqual(row['reason'], 'SESSION_TRUNCATED_CANDLE_REVIEW_NO_SIGNAL')
+        self.assertEqual(row['frame_quality']['1h'], 'WARMUP_NONCONTINUOUS_SPOT_SESSION')
+        self.assertEqual(row['frame_quality']['4h'], 'WARMUP_NONCONTINUOUS_SPOT_SESSION')
         self.assertFalse(row['buy_candidate'])
         self.assertNotIn('technical', row)
         self.assertEqual(bridge.document['transport_ready_count'], 400)
