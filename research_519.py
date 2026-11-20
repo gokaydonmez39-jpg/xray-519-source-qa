@@ -398,6 +398,8 @@ def scan(provider: Any, *, max_markets: int | None = None,
                          & session_markers.get('4h', set()))
             )
             if session_review:
+                frame_quality['1h'] = 'WARMUP_NONCONTINUOUS_SPOT_SESSION'
+                frame_quality['4h'] = 'WARMUP_NONCONTINUOUS_SPOT_SESSION'
                 result.update(
                     technical_data_quality='WARMUP',
                     reason='SESSION_TRUNCATED_CANDLE_REVIEW_NO_SIGNAL',
