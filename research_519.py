@@ -155,6 +155,27 @@ def parse_candles(raw: Any, *, period: int, expected: int, required: int) -> lis
     return chosen
 
 
+def session_truncated_markers(raw: Any, *, period: int, expected: int) -> set[tuple[int, int]]:
+    """Only identify a shortened closed candle followed by a session gap.
+
+    No synthetic candle or indicator data is ever produced by this helper.
+    Both original 1h and 4h feeds must report the same marker for quarantine.
+    """
+    if not isinstance(raw, list):
+        return set()
+    markers = set()
+    for current, following in zip(raw, raw[1:]):
+        if (not isinstance(current, list) or not isinstance(following, list)
+                or len(current) < 7 or len(following) < 1):
+            continue
+        op, cl, following_op = current[0], current[6], following[0]
+        if (type(op) is int and type(cl) is int and type(following_op) is int
+                and op % period == 0 and op <= cl < op + period - 1
+                and cl <= expected and following_op > op + period):
+            markers.add((op, cl))
+    return markers
+
+
 def ema(values: list[float], n: int) -> float:
     if len(values) < n:
         raise Warmup("EMA_WARMUP")
@@ -334,12 +355,16 @@ def scan(provider: Any, *, max_markets: int | None = None,
                   "buy_candidate":False,"orders_sent":0,"notifications_sent":0}
         bars = {}
         frame_quality = {}
+        session_markers: dict[str, set[tuple[int, int]]] = {}
         # Fetch all three frames even if one frame fails QA. This guarantees
         # a truthful 3-frame request count without mixing valid and invalid data.
         for interval, required in COUNTS.items():
             raw = provider.get('/api/v3/klines', {'symbol':symbol, 'interval':interval,
                                                  'limit':(BRIDGE_COUNTS[interval] if bridge_sink is not None else required),
                                                  'endTime':deadlines[interval]})
+            if interval in ('1h', '4h'):
+                session_markers[interval] = session_truncated_markers(
+                    raw, period=PERIODS[interval], expected=deadlines[interval])
             if bridge_sink is not None:
                 try:
                     extended = parse_candles(raw, period=PERIODS[interval],
@@ -360,7 +385,26 @@ def scan(provider: Any, *, max_markets: int | None = None,
         failed = [v[5:] for v in frame_quality.values() if v.startswith('FAIL_')]
         warming = [v[7:] for v in frame_quality.values() if v.startswith('WARMUP_')]
         if failed:
-            result.update(technical_data_quality='FAIL', reason=failed[0])
+            # A source-side review is allowed only for a full 519-selector
+            # scan with *two* independent Spot timeframe witnesses, exact
+            # shortened-candle identity and daily quality PASS. The entire
+            # affected market stays outside all technical indicators and AL.
+            session_review = (
+                full_bridge_mode
+                and frame_quality.get('1h') == 'FAIL_INVALID_PERIOD_ALIGNMENT'
+                and frame_quality.get('4h') == 'FAIL_INVALID_PERIOD_ALIGNMENT'
+                and frame_quality.get('1d') == 'PASS'
+                and bool(session_markers.get('1h', set())
+                         & session_markers.get('4h', set()))
+            )
+            if session_review:
+                result.update(
+                    technical_data_quality='WARMUP',
+                    reason='SESSION_TRUNCATED_CANDLE_REVIEW_NO_SIGNAL',
+                    session_quarantined=True,
+                    buy_candidate=False)
+            else:
+                result.update(technical_data_quality='FAIL', reason=failed[0])
         elif warming:
             result.update(technical_data_quality='WARMUP', reason=warming[0])
         else:
@@ -399,6 +443,10 @@ def scan(provider: Any, *, max_markets: int | None = None,
     count_ok = sum(counts.values()) == len(chosen)
     full_inventory = len(chosen) == identity_count
     no_qa_errors = counts['FAIL'] == 0
+    session_quarantine_count = sum(
+        row.get('session_quarantined') is True for row in results)
+    # A widespread coincident feed anomaly is systemic; never pass it.
+    quarantine_under_cap = session_quarantine_count <= 2
     report = {
       "schema":SCHEMA,"source":"BINANCE_PUBLIC_SPOT_REST","run_kind":"RESEARCH_ONLY_NO_AL",
       "http_provider_used":type(provider) is HttpProvider,
@@ -410,11 +458,14 @@ def scan(provider: Any, *, max_markets: int | None = None,
       "technical_scanned":len(results), "technical_frames_requested":len(results)*3,
       "technical_pass":counts['PASS'],
       "technical_warmup":counts['WARMUP'],"technical_failed":counts['FAIL'],
+      "session_quarantine_count":session_quarantine_count,
+      "session_quarantine_under_cap":quarantine_under_cap,
       "status_accounting_ok":count_ok,"scope_digest_sha256":digest,
       "receipt_key":f"{SCHEMA}|{deadlines['1h']}|{digest}|{len(chosen)}",
       "scope_stable":scope_stable,"epoch_stable":epoch_stable,"complete_identity_scope":full_inventory,
       "full_technical_quality":(full_inventory and counts['PASS']==identity_count and scope_stable and epoch_stable),
-      "source_qa_success":(no_qa_errors and scope_stable and epoch_stable and count_ok),
+      "source_qa_success":(no_qa_errors and quarantine_under_cap and
+                           scope_stable and epoch_stable and count_ok),
       "orders_sent":0,"notifications_sent":0,"private_strategy_evaluated":0,
       "live_al_claim":False,"native_wss_running":False,"phone_delivery_ack":False,
       "requests":getattr(provider,'requests',None),"duration_seconds":round(duration,3),
