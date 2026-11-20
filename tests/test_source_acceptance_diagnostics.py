@@ -1,7 +1,12 @@
 """Fail-closed source diagnostics: no release, order, or fallback semantics."""
+import contextlib
+import io
+import json
 import unittest
 
-from research_519 import source_acceptance_diagnostics
+from bridge_519 import BridgeCollector, BridgeError
+from research_519 import scan, source_acceptance_diagnostics
+from test_source import Provider
 
 
 class SourceAcceptanceDiagnosticsTests(unittest.TestCase):
@@ -53,6 +58,23 @@ class SourceAcceptanceDiagnosticsTests(unittest.TestCase):
         self.assertFalse(result["epoch_stable"])
         self.assertFalse(result["status_accounting_ok"])
         self.assertFalse(result["source_qa_success"])
+
+    def test_real_scan_emits_diagnostic_before_bridge_raises(self):
+        def corrupt(bars, params):
+            if params["interval"] == "1h":
+                bars[-1] = bars[-2]
+            return bars
+
+        stream = io.StringIO()
+        with contextlib.redirect_stderr(stream):
+            with self.assertRaisesRegex(BridgeError, "SOURCE_RECEIPT_NOT_ACCEPTED"):
+                scan(Provider(1, corrupt), bridge_sink=BridgeCollector())
+        lines = [json.loads(line) for line in stream.getvalue().splitlines()]
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]["event"], "SOURCE_ACCEPTANCE_FAIL_CLOSED_DIAGNOSTIC")
+        self.assertFalse(lines[0]["source_qa_success"])
+        self.assertEqual(lines[0]["technical_failed"], 1)
+        self.assertIn("UNSORTED_OR_DUPLICATE_KLINE", lines[0]["failure_reasons"])
 
     def test_empty_failure_list_not_fabricated_and_no_side_effects(self):
         report = self._report()
