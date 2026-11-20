@@ -12,8 +12,10 @@ FLOW = Path(__file__).resolve().parents[1] / ".github/workflows/hourly-519-publi
 
 DOUBLE = r'''
 import os, pathlib, sys, time
-mode = "optimized" if sys.flags.optimize else "normal"
-args = sys.argv[1:]
+# The shell invokes the mock *executable* with -O as an argument; the
+# shebang interpreter itself is not optimized.
+mode = "optimized" if sys.argv[1:2] == ["-O"] else "normal"
+args = sys.argv[2:] if mode == "optimized" else sys.argv[1:]
 assert args == ["-m", "unittest", "discover", "-s", "tests", "-q"]
 root = pathlib.Path(os.environ["XRAY_PROBE_ROOT"])
 scratch = pathlib.Path(os.environ["TMPDIR"])
