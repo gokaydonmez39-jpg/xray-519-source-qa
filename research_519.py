@@ -420,9 +420,48 @@ def scan(provider: Any, *, max_markets: int | None = None,
       "requests":getattr(provider,'requests',None),"duration_seconds":round(duration,3),
       "results":results
     }
+    if report['source_qa_success'] is not True:
+        print(json.dumps(source_acceptance_diagnostics(report), ensure_ascii=False,
+                         sort_keys=True), file=sys.stderr)
     if bridge_sink is not None:
         bridge_sink.finish(report)
     return report
+
+
+
+def source_acceptance_diagnostics(report: dict[str, Any]) -> dict[str, Any]:
+    """Bounded, public-only details explaining an unaccepted full source scan.
+
+    Never changes a gate, writes a receipt, retries, or backfills a scan.
+    This is emitted ONLY when source_qa_success is false.
+    """
+    failures = [
+        row for row in report.get("results", [])
+        if isinstance(row, dict) and row.get("technical_data_quality") == "FAIL"
+    ]
+    reasons = Counter(str(row.get("reason", "UNSPECIFIED"))[:80] for row in failures)
+    symbols = sorted(
+        (row["symbol"] for row in failures
+         if isinstance(row.get("symbol"), str) and len(row["symbol"]) <= 64),
+        key=lambda value: value.encode("utf-8"),
+    )
+    return {
+        "event": "SOURCE_ACCEPTANCE_FAIL_CLOSED_DIAGNOSTIC",
+        "source_qa_success": report.get("source_qa_success") is True,
+        "scope_stable": report.get("scope_stable") is True,
+        "epoch_stable": report.get("epoch_stable") is True,
+        "status_accounting_ok": report.get("status_accounting_ok") is True,
+        "complete_identity_scope": report.get("complete_identity_scope") is True,
+        "technical_failed": report.get("technical_failed"),
+        "technical_warmup": report.get("technical_warmup"),
+        "technical_pass": report.get("technical_pass"),
+        "identity_universe": report.get("identity_universe"),
+        "markets_selected": report.get("markets_selected"),
+        "start_server_ms": report.get("start_server_ms"),
+        "end_server_ms": report.get("end_server_ms"),
+        "failure_reasons": dict(sorted(reasons.items())),
+        "failed_symbols_sample": symbols[:8],
+    }
 
 
 def atomic_json(path: Path, report: dict[str, Any]) -> None:
