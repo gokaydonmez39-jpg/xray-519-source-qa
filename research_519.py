@@ -176,6 +176,59 @@ def session_truncated_markers(raw: Any, *, period: int, expected: int) -> set[tu
     return markers
 
 
+def expired_1h_session_witness(provider: Any, *, symbol: str, raw4: Any,
+                               expected4: int, expected1: int) -> bool:
+    """Corroborate exactly one old shortened 4h bar outside the normal 1h window.
+
+    One bounded diagnostic GET; never use its bars for indicators or history repair.
+    All unexplained anomalies, malformed witnesses and transport errors stay HOLD.
+    """
+    markers = session_truncated_markers(raw4, period=4 * HOUR, expected=expected4)
+    if len(markers) != 1:
+        return False
+    op, cl = next(iter(markers))
+    if cl - op + 1 >= HOUR or op >= expected1 + 1 - BRIDGE_COUNTS['1h'] * HOUR:
+        return False
+    bad = []
+    prev = None
+    for row in raw4:
+        if not isinstance(row, list) or len(row) < 11 or type(row[0]) is not int or type(row[6]) is not int:
+            return False
+        start, close = row[0], row[6]
+        if prev is not None and start <= prev:
+            return False
+        prev = start
+        if close <= expected4 and (start % (4 * HOUR) or close != start + 4 * HOUR - 1):
+            bad.append((start, close))
+    if bad != [(op, cl)]:
+        return False
+    following = next((row[0] for row in raw4 if row[0] > op), None)
+    if following is None or following > op + 7 * DAY:
+        return False
+    end = min(expected1, following + 4 * HOUR - 1)
+    limit = (end - op + 1) // HOUR
+    if not 2 <= limit <= 172:
+        return False
+    raw1 = provider.get('/api/v3/klines', {
+        'symbol': symbol, 'interval': '1h', 'startTime': op,
+        'endTime': end, 'limit': limit})
+    if not isinstance(raw1, list) or not 2 <= len(raw1) <= limit:
+        return False
+    prev = None
+    witness_bad = []
+    for row in raw1:
+        if not isinstance(row, list) or len(row) < 11 or type(row[0]) is not int or type(row[6]) is not int:
+            return False
+        start, close = row[0], row[6]
+        if not op <= start <= close <= end or (prev is not None and start <= prev):
+            return False
+        prev = start
+        if start % HOUR or close != start + HOUR - 1:
+            witness_bad.append((start, close))
+    return (witness_bad == [(op, cl)]
+            and session_truncated_markers(raw1, period=HOUR, expected=end) == {(op, cl)})
+
+
 def ema(values: list[float], n: int) -> float:
     if len(values) < n:
         raise Warmup("EMA_WARMUP")
@@ -349,6 +402,7 @@ def scan(provider: Any, *, max_markets: int | None = None,
     counts = Counter()
     results = []
     deadlines = {interval:closed_epoch(start_ms, period) for interval,period in PERIODS.items()}
+    session_witness_probes = 0
     for market in chosen:
         symbol = market['symbol']
         result = {"symbol":symbol, "identity":"SPOT_USDT_TRADING", "research_only":True,
@@ -356,12 +410,15 @@ def scan(provider: Any, *, max_markets: int | None = None,
         bars = {}
         frame_quality = {}
         session_markers: dict[str, set[tuple[int, int]]] = {}
+        raw4 = None
         # Fetch all three frames even if one frame fails QA. This guarantees
         # a truthful 3-frame request count without mixing valid and invalid data.
         for interval, required in COUNTS.items():
             raw = provider.get('/api/v3/klines', {'symbol':symbol, 'interval':interval,
                                                  'limit':(BRIDGE_COUNTS[interval] if bridge_sink is not None else required),
                                                  'endTime':deadlines[interval]})
+            if interval == '4h':
+                raw4 = raw
             if interval in ('1h', '4h'):
                 session_markers[interval] = session_truncated_markers(
                     raw, period=PERIODS[interval], expected=deadlines[interval])
@@ -397,6 +454,15 @@ def scan(provider: Any, *, max_markets: int | None = None,
                 and bool(session_markers.get('1h', set())
                          & session_markers.get('4h', set()))
             )
+            if (not session_review and full_bridge_mode
+                    and frame_quality == {'1h': 'PASS',
+                                          '4h': 'FAIL_INVALID_PERIOD_ALIGNMENT',
+                                          '1d': 'PASS'}
+                    and session_witness_probes < 2):
+                session_witness_probes += 1
+                session_review = expired_1h_session_witness(
+                    provider, symbol=symbol, raw4=raw4,
+                    expected4=deadlines['4h'], expected1=deadlines['1h'])
             if session_review:
                 frame_quality['1h'] = 'WARMUP_NONCONTINUOUS_SPOT_SESSION'
                 frame_quality['4h'] = 'WARMUP_NONCONTINUOUS_SPOT_SESSION'
