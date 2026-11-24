@@ -176,6 +176,59 @@ def session_truncated_markers(raw: Any, *, period: int, expected: int) -> set[tu
     return markers
 
 
+def expired_1h_session_witness(provider: Any, *, symbol: str, raw4: Any,
+                               expected4: int, expected1: int) -> bool:
+    """Corroborate exactly one old shortened 4h bar outside the normal 1h window.
+
+    One bounded diagnostic GET; never use its bars for indicators or history repair.
+    All unexplained anomalies, malformed witnesses and transport errors stay HOLD.
+    """
+    markers = session_truncated_markers(raw4, period=4 * HOUR, expected=expected4)
+    if len(markers) != 1:
+        return False
+    op, cl = next(iter(markers))
+    if cl - op + 1 >= HOUR or op >= expected1 + 1 - BRIDGE_COUNTS['1h'] * HOUR:
+        return False
+    bad = []
+    prev = None
+    for row in raw4:
+        if not isinstance(row, list) or len(row) < 11 or type(row[0]) is not int or type(row[6]) is not int:
+            return False
+        start, close = row[0], row[6]
+        if prev is not None and start <= prev:
+            return False
+        prev = start
+        if close <= expected4 and (start % (4 * HOUR) or close != start + 4 * HOUR - 1):
+            bad.append((start, close))
+    if bad != [(op, cl)]:
+        return False
+    following = next((row[0] for row in raw4 if row[0] > op), None)
+    if following is None or following > op + 7 * DAY:
+        return False
+    end = min(expected1, following + 4 * HOUR - 1)
+    limit = (end - op + 1) // HOUR
+    if not 2 <= limit <= 172:
+        return False
+    raw1 = provider.get('/api/v3/klines', {
+        'symbol': symbol, 'interval': '1h', 'startTime': op,
+        'endTime': end, 'limit': limit})
+    if not isinstance(raw1, list) or not 2 <= len(raw1) <= limit:
+        return False
+    prev = None
+    witness_bad = []
+    for row in raw1:
+        if not isinstance(row, list) or len(row) < 11 or type(row[0]) is not int or type(row[6]) is not int:
+            return False
+        start, close = row[0], row[6]
+        if not op <= start <= close <= end or (prev is not None and start <= prev):
+            return False
+        prev = start
+        if start % HOUR or close != start + HOUR - 1:
+            witness_bad.append((start, close))
+    return (witness_bad == [(op, cl)]
+            and session_truncated_markers(raw1, period=HOUR, expected=end) == {(op, cl)})
+
+
 def ema(values: list[float], n: int) -> float:
     if len(values) < n:
         raise Warmup("EMA_WARMUP")
@@ -232,6 +285,8 @@ class HttpProvider:
         self.started = clock()
         self.previous = None
         self.requests = 0
+        self.http500_recoveries = 0
+        self.last_request = None
         proxies = urllib.request.getproxies()
         # Preserve the configured proxy route exactly. Direct standard runners
         # can reuse one verified TLS connection instead of reconnecting per GET.
@@ -241,6 +296,30 @@ class HttpProvider:
                        else _PersistentHTTPSOpener())
 
     def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        # A single transient 500 recovery only for the same immutable closed-bar
+        # GET, in this in-progress scan. Never retry any other endpoint/status,
+        # a historical witness, or a full epoch. The original budgets still apply.
+        try:
+            return self._get_once(path, params)
+        except FatalSourceError as exc:
+            if (str(exc) != 'HTTP_500_FAIL_CLOSED'
+                    or path != '/api/v3/klines'
+                    or not isinstance(params, dict)
+                    or set(params) != {'symbol', 'interval', 'limit', 'endTime'}
+                    or type(params['endTime']) is not int
+                    or params['interval'] not in PERIODS
+                    or self.http500_recoveries >= 2
+                    or self.requests >= self.max_requests
+                    or self.clock() - self.started + 1.0 + self.timeout >= self.max_seconds):
+                raise
+            self.http500_recoveries += 1
+            if isinstance(self.opener, _PersistentHTTPSOpener) and self.opener.connection is not None:
+                self.opener.connection.close()
+                self.opener.connection = None
+            self.sleeper(1.0)
+            return self._get_once(path, params)
+
+    def _get_once(self, path: str, params: dict[str, Any] | None = None) -> Any:
         if path not in ALLOWED_PATHS:
             raise FatalSourceError("DISALLOWED_ENDPOINT")
         if self.requests >= self.max_requests:
@@ -253,6 +332,15 @@ class HttpProvider:
                 self.sleeper(delay)
         self.previous = self.clock()
         self.requests += 1
+        self.last_request = {'path': path}
+        if path == '/api/v3/klines' and isinstance(params, dict):
+            symbol = params.get('symbol')
+            interval = params.get('interval')
+            if (isinstance(symbol, str) and symbol.isascii() and symbol.isalnum()
+                    and symbol.endswith('USDT') and len(symbol) <= 64):
+                self.last_request['symbol'] = symbol
+            if isinstance(interval, str) and interval in PERIODS:
+                self.last_request['interval'] = interval
         url = BASE_URL + path + ('?' + urllib.parse.urlencode(params, encoding='utf-8') if params else '')
         request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "XRAY-ReadOnly-Research/1"}, method='GET')
         try:
@@ -270,7 +358,7 @@ class HttpProvider:
 
 
 class _PersistentHTTPSOpener:
-    """One sequential TLS connection; never follows redirects or retries a GET."""
+    """One sequential TLS connection; no redirects or implicit transport retries."""
     def __init__(self):
         self.connection = None
 
@@ -349,6 +437,7 @@ def scan(provider: Any, *, max_markets: int | None = None,
     counts = Counter()
     results = []
     deadlines = {interval:closed_epoch(start_ms, period) for interval,period in PERIODS.items()}
+    session_witness_probes = 0
     for market in chosen:
         symbol = market['symbol']
         result = {"symbol":symbol, "identity":"SPOT_USDT_TRADING", "research_only":True,
@@ -356,12 +445,15 @@ def scan(provider: Any, *, max_markets: int | None = None,
         bars = {}
         frame_quality = {}
         session_markers: dict[str, set[tuple[int, int]]] = {}
+        raw4 = None
         # Fetch all three frames even if one frame fails QA. This guarantees
         # a truthful 3-frame request count without mixing valid and invalid data.
         for interval, required in COUNTS.items():
             raw = provider.get('/api/v3/klines', {'symbol':symbol, 'interval':interval,
                                                  'limit':(BRIDGE_COUNTS[interval] if bridge_sink is not None else required),
                                                  'endTime':deadlines[interval]})
+            if interval == '4h':
+                raw4 = raw
             if interval in ('1h', '4h'):
                 session_markers[interval] = session_truncated_markers(
                     raw, period=PERIODS[interval], expected=deadlines[interval])
@@ -397,6 +489,15 @@ def scan(provider: Any, *, max_markets: int | None = None,
                 and bool(session_markers.get('1h', set())
                          & session_markers.get('4h', set()))
             )
+            if (not session_review and full_bridge_mode
+                    and frame_quality == {'1h': 'PASS',
+                                          '4h': 'FAIL_INVALID_PERIOD_ALIGNMENT',
+                                          '1d': 'PASS'}
+                    and session_witness_probes < 2):
+                session_witness_probes += 1
+                session_review = expired_1h_session_witness(
+                    provider, symbol=symbol, raw4=raw4,
+                    expected4=deadlines['4h'], expected1=deadlines['1h'])
             if session_review:
                 frame_quality['1h'] = 'WARMUP_NONCONTINUOUS_SPOT_SESSION'
                 frame_quality['4h'] = 'WARMUP_NONCONTINUOUS_SPOT_SESSION'
@@ -587,6 +688,8 @@ def main(argv: list[str] | None = None) -> int:
         # Fatal errors do not create or overwrite an attestation receipt.
         print(json.dumps({'status':'FAIL_CLOSED','error':str(e), 'request_count':provider.requests,
                           'duration_seconds':round(provider.clock()-provider.started,3),
+                          'last_request':getattr(provider, 'last_request', None),
+                          'http500_recoveries':getattr(provider, 'http500_recoveries', 0),
                           'orders_sent':0,'notifications_sent':0}),file=sys.stderr)
         return 2
 
