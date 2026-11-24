@@ -285,6 +285,8 @@ class HttpProvider:
         self.started = clock()
         self.previous = None
         self.requests = 0
+        self.http500_recoveries = 0
+        self.last_request = None
         proxies = urllib.request.getproxies()
         # Preserve the configured proxy route exactly. Direct standard runners
         # can reuse one verified TLS connection instead of reconnecting per GET.
@@ -294,6 +296,30 @@ class HttpProvider:
                        else _PersistentHTTPSOpener())
 
     def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        # A single transient 500 recovery only for the same immutable closed-bar
+        # GET, in this in-progress scan. Never retry any other endpoint/status,
+        # a historical witness, or a full epoch. The original budgets still apply.
+        try:
+            return self._get_once(path, params)
+        except FatalSourceError as exc:
+            if (str(exc) != 'HTTP_500_FAIL_CLOSED'
+                    or path != '/api/v3/klines'
+                    or not isinstance(params, dict)
+                    or set(params) != {'symbol', 'interval', 'limit', 'endTime'}
+                    or type(params['endTime']) is not int
+                    or params['interval'] not in PERIODS
+                    or self.http500_recoveries >= 2
+                    or self.requests >= self.max_requests
+                    or self.clock() - self.started + 1.0 + self.timeout >= self.max_seconds):
+                raise
+            self.http500_recoveries += 1
+            if isinstance(self.opener, _PersistentHTTPSOpener) and self.opener.connection is not None:
+                self.opener.connection.close()
+                self.opener.connection = None
+            self.sleeper(1.0)
+            return self._get_once(path, params)
+
+    def _get_once(self, path: str, params: dict[str, Any] | None = None) -> Any:
         if path not in ALLOWED_PATHS:
             raise FatalSourceError("DISALLOWED_ENDPOINT")
         if self.requests >= self.max_requests:
@@ -306,6 +332,15 @@ class HttpProvider:
                 self.sleeper(delay)
         self.previous = self.clock()
         self.requests += 1
+        self.last_request = {'path': path}
+        if path == '/api/v3/klines' and isinstance(params, dict):
+            symbol = params.get('symbol')
+            interval = params.get('interval')
+            if (isinstance(symbol, str) and symbol.isascii() and symbol.isalnum()
+                    and symbol.endswith('USDT') and len(symbol) <= 64):
+                self.last_request['symbol'] = symbol
+            if isinstance(interval, str) and interval in PERIODS:
+                self.last_request['interval'] = interval
         url = BASE_URL + path + ('?' + urllib.parse.urlencode(params, encoding='utf-8') if params else '')
         request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "XRAY-ReadOnly-Research/1"}, method='GET')
         try:
@@ -323,7 +358,7 @@ class HttpProvider:
 
 
 class _PersistentHTTPSOpener:
-    """One sequential TLS connection; never follows redirects or retries a GET."""
+    """One sequential TLS connection; no redirects or implicit transport retries."""
     def __init__(self):
         self.connection = None
 
@@ -653,6 +688,8 @@ def main(argv: list[str] | None = None) -> int:
         # Fatal errors do not create or overwrite an attestation receipt.
         print(json.dumps({'status':'FAIL_CLOSED','error':str(e), 'request_count':provider.requests,
                           'duration_seconds':round(provider.clock()-provider.started,3),
+                          'last_request':getattr(provider, 'last_request', None),
+                          'http500_recoveries':getattr(provider, 'http500_recoveries', 0),
                           'orders_sent':0,'notifications_sent':0}),file=sys.stderr)
         return 2
 
