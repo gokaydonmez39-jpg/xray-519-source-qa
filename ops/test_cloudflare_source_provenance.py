@@ -437,5 +437,52 @@ class FixedWindowComparisonTests(unittest.TestCase):
         self.assertFalse(result["release_authority"])
 
 
+
+class EpochIncidentDiagnosticsTests(unittest.TestCase):
+    def measure(self, events):
+        from ops.cloudflare_source_provenance import summarize_epoch_incidents
+        result = summarize_epoch_incidents(events, STAMP)
+        self.assertFalse(result["release_authority"])
+        self.assertEqual(result["queried_epochs"], 48)
+        self.assertLessEqual(len(result["incident_epochs"]), 48)
+        self.assertNotIn(TRACE, json.dumps(result))
+        self.assertNotIn(str(RUN), json.dumps(result))
+        return next((r for r in result["incident_epochs"] if r["epoch_utc"]=="2026-11-01T20:00:00Z"), None)
+    def test_primary_failure_and_backup_access_lock(self):
+        root=event_root(outcome="exception")
+        failure=event_do(decision="GITHUB_RUNS_UNAVAILABLE")
+        backup=event_root(trace="b"*32,cron="6 * * * *",outcome="exception",stamp_ms=EPOCH_MS+370000)
+        locked=event_do(trace="b"*32,decision="DUPLICATE_EPOCH_LOCKED",stamp_ms=EPOCH_MS+370001)
+        locked["source"]["duplicateLock"]={"state":"GITHUB_HTTP_ACCESS_BLOCKED"}
+        result=self.measure([root,failure,backup,locked])
+        self.assertEqual(result["primary"]["decision"],"GITHUB_RUNS_UNAVAILABLE")
+        self.assertEqual(result["backup"]["lock_state"],"GITHUB_HTTP_ACCESS_BLOCKED")
+        self.assertEqual(result["backup"]["status"],"FAILURE_OR_HOLD")
+    def test_healthy_pair_is_omitted(self):
+        backup=event_root(trace="b"*32,cron="6 * * * *",stamp_ms=EPOCH_MS+370000)
+        locked=event_do(trace="b"*32,decision="DUPLICATE_EPOCH_LOCKED",stamp_ms=EPOCH_MS+370001)
+        locked["source"]["duplicateLock"]={"state":"DISPATCH_ACCEPTED_NOT_SOURCE_PASS"}
+        self.assertIsNone(self.measure([event_root(),event_do(),backup,locked]))
+    def test_unobserved_and_mismatched_trace_are_not_green(self):
+        self.assertEqual(self.measure([])["primary"]["status"],"NO_SCHEDULED_LOG")
+        for changed in (event_do(version="b"*36),event_do(stamp="20261101T1900Z"),event_do(stamp_ms=EPOCH_MS+250000)):
+            self.assertEqual(self.measure([event_root(),changed])["primary"]["status"],"MISSING_MATCHED_DECISION")
+    def test_ambiguous_and_malformed_never_leak(self):
+        self.assertEqual(self.measure([event_root(),event_root(),event_do()])["primary"]["status"],"MULTIPLE_ROOTS")
+        bad=event_do(decision={"secret":"DUMMY_DO_NOT_LEAK"})
+        bad["source"]["duplicateLock"]={"state":["DUMMY_DO_NOT_LEAK"]}
+        row=self.measure([event_root(),bad])
+        self.assertEqual(row["primary"]["status"],"UNKNOWN_DECISION")
+        self.assertNotIn("DUMMY_DO_NOT_LEAK",json.dumps(row))
+        from ops.cloudflare_source_provenance import summarize_invocations
+        self.assertEqual(summarize_invocations([event_root(),bad],STAMP)["real_failures_or_holds"],1)
+    def test_conflicting_decision_and_lock_hold(self):
+        a=event_do(decision="DUPLICATE_EPOCH_LOCKED")
+        b=event_do(decision="DUPLICATE_EPOCH_LOCKED")
+        a["source"]["duplicateLock"]={"state":"RESERVED"}
+        b["source"]["duplicateLock"]={"state":"GITHUB_HTTP_ACCESS_BLOCKED"}
+        self.assertEqual(self.measure([event_root(),a,b])["primary"]["status"],"CONFLICTING_DECISIONS")
+
+
 if __name__=="__main__":
     unittest.main()
