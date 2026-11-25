@@ -483,6 +483,30 @@ class EpochIncidentDiagnosticsTests(unittest.TestCase):
         b["source"]["duplicateLock"]={"state":"GITHUB_HTTP_ACCESS_BLOCKED"}
         self.assertEqual(self.measure([event_root(),a,b])["primary"]["status"],"CONFLICTING_DECISIONS")
 
+    def test_http_rejection_status_is_exact_and_bounded(self):
+        for code in (403, 429, 422, 500, 503):
+            d=event_do(decision="DISPATCH_REJECTED")
+            d["source"]["httpStatus"]=code
+            self.assertEqual(self.measure([event_root(outcome="exception"),d])["primary"]["http_status"],code)
+        for code in (None,True,"503",99,600,{"secret":"DUMMY_DO_NOT_LEAK"}):
+            d=event_do(decision="DISPATCH_REJECTED")
+            d["source"]["httpStatus"]=code
+            row=self.measure([event_root(outcome="exception"),d])
+            self.assertIsNone(row["primary"]["http_status"])
+            self.assertNotIn("DUMMY_DO_NOT_LEAK",json.dumps(row))
+    def test_conflicting_http_status_does_not_invent_cause(self):
+        a=event_do(decision="DISPATCH_REJECTED")
+        b=event_do(decision="DISPATCH_REJECTED")
+        a["source"]["httpStatus"]=403
+        b["source"]["httpStatus"]=503
+        row=self.measure([event_root(outcome="exception"),a,b])
+        self.assertEqual(row["primary"]["status"],"CONFLICTING_DECISIONS")
+        self.assertIsNone(row["primary"]["http_status"])
+    def test_non_http_decision_cannot_publish_status(self):
+        d=event_do(decision="DUPLICATE_EPOCH_LOCKED")
+        d["source"]["httpStatus"]=503
+        self.assertIsNone(self.measure([event_root(outcome="exception"),d])["primary"]["http_status"])
+
 
 if __name__=="__main__":
     unittest.main()
