@@ -371,6 +371,8 @@ def summarize_epoch_incidents(events, end_stamp):
             p = _log_payload(e)
             if isinstance(p, dict):
                 g["logs"].append((at, _version(e), p))
+    # Only known upstream HTTP failure decisions may carry a numeric status.
+    status_decisions = {"DISPATCH_REJECTED", "GITHUB_RUNS_UNAVAILABLE", "SOURCE_RECEIPT_LOOKUP_UNAVAILABLE"}
     slots = {}
     for g in groups.values():
         for at, cron, version, ok in g["roots"]:
@@ -378,10 +380,10 @@ def summarize_epoch_incidents(events, end_stamp):
             stamp = datetime.fromtimestamp(hour/1000, timezone.utc).strftime("%Y%m%dT%H00Z")
             slot = slots.setdefault((hour, cron), [])
             if len(g["roots"]) != 1:
-                slot.append(("AMBIGUOUS_ROOT", "UNKNOWN", "UNKNOWN"))
+                slot.append(("AMBIGUOUS_ROOT", "UNKNOWN", "UNKNOWN", None))
                 continue
             if not ALLOWED_CRONS[cron] <= at-hour <= ALLOWED_CRONS[cron]+90000:
-                slot.append(("OUTSIDE_NOMINAL_WINDOW", "UNKNOWN", "UNKNOWN"))
+                slot.append(("OUTSIDE_NOMINAL_WINDOW", "UNKNOWN", "UNKNOWN", None))
                 continue
             decisions = set()
             for log_at, log_version, p in g["logs"]:
@@ -389,11 +391,14 @@ def summarize_epoch_incidents(events, end_stamp):
                     continue
                 lock = p.get("duplicateLock")
                 state = _enum(lock.get("state"), _DIAG_LOCKS) if isinstance(lock, dict) else "UNKNOWN"
-                decisions.add((_enum(p.get("decision"), _DIAG_DECISIONS), state))
+                decision = _enum(p.get("decision"), _DIAG_DECISIONS)
+                code = p.get("httpStatus")
+                code = code if decision in status_decisions and type(code) is int and 100 <= code <= 599 else None
+                decisions.add((decision, state, code))
             if len(decisions) != 1:
-                slot.append(("MISSING_MATCHED_DECISION" if not decisions else "CONFLICTING_DECISIONS", "UNKNOWN", "UNKNOWN"))
+                slot.append(("MISSING_MATCHED_DECISION" if not decisions else "CONFLICTING_DECISIONS", "UNKNOWN", "UNKNOWN", None))
                 continue
-            decision, lock = next(iter(decisions))
+            decision, lock, code = next(iter(decisions))
             if decision == "UNKNOWN":
                 status = "UNKNOWN_DECISION"
             elif cron == "6 * * * *" and decision == "DUPLICATE_EPOCH_LOCKED" and lock in HANDLED_DUPLICATE_STATES:
@@ -402,16 +407,16 @@ def summarize_epoch_incidents(events, end_stamp):
                 status = "ACCEPTED_NOT_SOURCE_PASS"
             else:
                 status = "FAILURE_OR_HOLD"
-            slot.append((status, decision, lock))
+            slot.append((status, decision, lock, code))
     good = {"ACCEPTED_NOT_SOURCE_PASS", "EXPECTED_BACKUP_DUPLICATE"}
     rows = []
     for hour in range(low, end_ms+1, 3600000):
         row = {"epoch_utc": datetime.fromtimestamp(hour/1000, timezone.utc).strftime("%Y-%m-%dT%H:00:00Z")}
         for cron, label in (("1 * * * *", "primary"), ("6 * * * *", "backup")):
             found = slots.get((hour, cron), [])
-            status, decision, lock = found[0] if len(found)==1 else (
-                "NO_SCHEDULED_LOG" if not found else "MULTIPLE_ROOTS", "UNKNOWN", "UNKNOWN")
-            row[label] = {"status":status,"decision":decision,"lock_state":lock,"root_count":len(found)}
+            status, decision, lock, code = found[0] if len(found)==1 else (
+                "NO_SCHEDULED_LOG" if not found else "MULTIPLE_ROOTS", "UNKNOWN", "UNKNOWN", None)
+            row[label] = {"status":status,"decision":decision,"lock_state":lock,"root_count":len(found),"http_status":code}
         if any(row[label]["status"] not in good for label in ("primary","backup")):
             rows.append(row)
     return {"schema":"XRAY_CF_EPOCH_INCIDENTS_V1", "release_authority":False,
