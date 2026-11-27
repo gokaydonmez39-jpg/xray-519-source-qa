@@ -1,0 +1,25 @@
+name: XRAY SOURCE isolated publisher regression 20261128
+on:
+  push:
+    branches: ['audit/source-publisher-isolated-ci-20261128']
+    paths:
+      - 'isolated_source_publisher_ci_20261128/**'
+      - '.github/workflows/source-publisher-isolated-ci-20261128.yml'
+permissions:
+  contents: read
+jobs:
+  offline-publisher-only:
+    if: github.repository == 'gokaydonmez39-jpg/xray-519-source-qa' && github.event.repository.private == false && github.ref == 'refs/heads/audit/source-publisher-isolated-ci-20261128'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Checkout isolated fixture only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          sparse-checkout: isolated_source_publisher_ci_20261128
+      - name: Exact input integrity and synthetic bare Git regression
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: bash isolated_source_publisher_ci_20261128/run_ci.sh
