@@ -6,6 +6,9 @@ Every retry checks unchanged execution inputs and reads back exact SHA256 bytes.
 """
 from __future__ import annotations
 import argparse
+from contextvars import ContextVar
+from datetime import datetime, timezone
+import math
 import hashlib
 import json
 import os
@@ -13,6 +16,8 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import signal
+import time
 
 PATH_RE = re.compile(r'(receipts|bridges)/\d{4}/\d{2}/\d{2}/\d{8}T\d{2}00Z-n([1-9]\d{0,2})\.json\.gz\Z')
 
@@ -21,11 +26,52 @@ class PublishBlocked(ValueError):
     pass
 
 
+class GitOperationTimeout(PublishBlocked):
+    """Remote outcome may be ambiguous: always fetch and verify before another push."""
+
+
+_GIT_TIMEOUT_SECONDS = 30.0
+_PUBLISH_BUDGET_SECONDS = 150.0
+_deadline = ContextVar('xray_publish_deadline', default=None)
+
+
 def git(*args, data=None, env=None, check=True):
-    r = subprocess.run(['git', *args], input=data, capture_output=True, env=env, timeout=30)
+    remaining = _deadline.get()
+    timeout = _GIT_TIMEOUT_SECONDS if remaining is None else min(_GIT_TIMEOUT_SECONDS, remaining - time.monotonic())
+    if timeout <= 0:
+        raise PublishBlocked('PUBLISH_DEADLINE_EXPIRED')
+    operation = args[0]
+    try:
+        p = subprocess.Popen(['git', *args], stdin=subprocess.PIPE if data is not None else subprocess.DEVNULL,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, start_new_session=True)
+    except OSError:
+        raise PublishBlocked('GIT_START_FAILED:' + operation) from None
+    try:
+        stdout, stderr = p.communicate(input=data, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # Killing only the immediate git process can leave git-remote-https or
+        # an SSH child alive. Kill the process group, not the caller's session.
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            p.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            for stream in (p.stdin, p.stdout, p.stderr):
+                if stream is not None:
+                    stream.close()
+            try:
+                p.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                raise PublishBlocked('GIT_TIMEOUT_CLEANUP_UNCERTAIN:' + operation) from None
+            # A child may have escaped the process group: do not retry blindly.
+            raise PublishBlocked('GIT_TIMEOUT_CLEANUP_UNCERTAIN:' + operation) from None
+        raise GitOperationTimeout('GIT_OPERATION_TIMEOUT:' + operation) from None
+    r = subprocess.CompletedProcess(['git', *args], p.returncode, stdout, stderr)
     if check and r.returncode:
         # Do not echo git stderr: authenticated remotes may contain credentials.
-        raise PublishBlocked('GIT_OPERATION_FAILED:' + args[0])
+        raise PublishBlocked('GIT_OPERATION_FAILED:' + operation)
     return r
 
 
@@ -43,7 +89,27 @@ def tree(ref):
     return entries
 
 
-def publish(base, branch, paths, attempts=3):
+def publish(base, branch, paths, attempts=3, *, budget_seconds=_PUBLISH_BUDGET_SECONDS):
+    if (isinstance(budget_seconds, bool) or not isinstance(budget_seconds, (int, float))
+            or not math.isfinite(budget_seconds) or not 0 < budget_seconds <= _PUBLISH_BUDGET_SECONDS):
+        raise PublishBlocked('INVALID_PUBLISH_BUDGET')
+    if type(attempts) is not int or not 1 <= attempts <= 3:
+        raise PublishBlocked('INVALID_RETRY_BUDGET')
+    deadline = time.monotonic() + budget_seconds
+    parent = _deadline.get()
+    token = _deadline.set(deadline if parent is None else min(deadline, parent))
+    try:
+        return _publish(base, branch, paths, attempts)
+    finally:
+        _deadline.reset(token)
+
+
+def _retry_timeout(exc):
+    # No remote URL, arguments, stdout, stderr or credentials in diagnostics.
+    print('PUBLISH_RETRYABLE_TIMEOUT ' + str(exc), flush=True)
+
+
+def _publish(base, branch, paths, attempts):
     if branch != 'main' or len(paths) not in (1, 2) or len(set(paths)) != len(paths):
         raise PublishBlocked('INVALID_PUBLISH_SCOPE')
     matches = [PATH_RE.fullmatch(p) for p in paths]
@@ -81,7 +147,11 @@ def publish(base, branch, paths, attempts=3):
         return {p: entry for p, entry in t.items()
                 if p.endswith('.py') or p.startswith('.github/workflows/')}
     for attempt in range(attempts):
-        git('fetch', '--no-tags', 'origin', 'refs/heads/main')
+        try:
+            git('fetch', '--no-tags', 'origin', 'refs/heads/main')
+        except GitOperationTimeout as exc:
+            _retry_timeout(exc)
+            continue
         remote = output('rev-parse', 'FETCH_HEAD')
         if git('merge-base', '--is-ancestor', base, remote, check=False).returncode:
             raise PublishBlocked('REMOTE_HISTORY_DIVERGED')
@@ -113,10 +183,20 @@ def publish(base, branch, paths, attempts=3):
                 new_tree = git('write-tree', *write_tree_args, env=env).stdout.decode().strip()
             committed = git('commit-tree', new_tree, '-p', remote,
                             data=b'research: append immutable source evidence [skip ci]\n').stdout.decode().strip()
-            pushed = git('push', 'origin', committed + ':refs/heads/main', check=False)
+            try:
+                pushed = git('push', 'origin', committed + ':refs/heads/main', check=False)
+            except GitOperationTimeout as exc:
+                # The server may have accepted the push before the timeout.
+                # Next attempt rechecks ancestry, source inputs and exact pair.
+                _retry_timeout(exc)
+                continue
             if pushed.returncode:
                 continue  # Bounded retry rechecks source, pair collision, and ancestry.
-        git('fetch', '--no-tags', 'origin', 'refs/heads/main')
+        try:
+            git('fetch', '--no-tags', 'origin', 'refs/heads/main')
+        except GitOperationTimeout as exc:
+            _retry_timeout(exc)
+            continue
         readback = output('rev-parse', 'FETCH_HEAD')
         if git('merge-base', '--is-ancestor', committed, readback, check=False).returncode:
             raise PublishBlocked('REMOTE_READBACK_HISTORY_DIVERGED')
@@ -133,14 +213,46 @@ def publish(base, branch, paths, attempts=3):
     raise PublishBlocked('REMOTE_PUSH_RETRY_EXHAUSTED')
 
 
+def current_epoch_budget(paths, *, now=None):
+    """For approved live workflow only; never reopen a previous natural epoch.
+
+    End before the existing H+12 audit with a 30-second safety margin.
+    The budget is computed once, then enforced using a monotonic clock.
+    """
+    receipts = [p for p in paths if p.startswith('receipts/')]
+    if len(receipts) != 1 or PATH_RE.fullmatch(receipts[0]) is None:
+        raise PublishBlocked('INVALID_LIVE_RECEIPT_PATH')
+    path = receipts[0]
+    try:
+        stamp = Path(path).name.split('-n', 1)[0]
+        epoch = datetime.strptime(stamp, '%Y%m%dT%H00Z').replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise PublishBlocked('INVALID_LIVE_RECEIPT_EPOCH') from None
+    if path.split('/')[1:4] != [epoch.strftime('%Y'), epoch.strftime('%m'), epoch.strftime('%d')]:
+        raise PublishBlocked('LIVE_RECEIPT_PATH_EPOCH_MISMATCH')
+    wall = time.time() if now is None else now
+    if not isinstance(wall, (int, float)) or isinstance(wall, bool) or not math.isfinite(wall):
+        raise PublishBlocked('INVALID_LIVE_CLOCK')
+    age = wall - epoch.timestamp()
+    if not 0 <= age < 690:
+        raise PublishBlocked('OUTSIDE_CURRENT_LIVE_PUBLISH_WINDOW')
+    # Reserve four seconds for bounded process cleanup in the worst case.
+    budget = min(_PUBLISH_BUDGET_SECONDS, 686 - age)
+    if budget <= 0:
+        raise PublishBlocked('INSUFFICIENT_LIVE_PUBLISH_BUDGET')
+    return budget
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--base', required=True)
     p.add_argument('--branch', required=True)
+    p.add_argument('--require-current-epoch', action='store_true', help='Mandatory in approved live workflow; synthetic local tests only may omit.')
     p.add_argument('paths', nargs='+')
     a = p.parse_args()
     try:
-        publish(a.base, a.branch, a.paths)
+        budget = current_epoch_budget(a.paths) if a.require_current_epoch else _PUBLISH_BUDGET_SECONDS
+        publish(a.base, a.branch, a.paths, budget_seconds=budget)
         return 0
     except (PublishBlocked, OSError, ValueError, subprocess.TimeoutExpired):
         import sys
