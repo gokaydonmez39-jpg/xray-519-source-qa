@@ -171,9 +171,9 @@ jobs:
           fi
           git commit -m "research: append immutable $MODE closed-bar receipt [skip ci]"
           if [ "$MODE" = 519 ]; then
-            python3 publish_git.py --require-current-epoch --base "$SCAN_BASE" --branch "$GITHUB_REF_NAME" "$FILE" "$BFILE"
+            python3 publish_git.py --base "$SCAN_BASE" --require-current-epoch --branch "$GITHUB_REF_NAME" "$FILE" "$BFILE"
           else
-            python3 publish_git.py --require-current-epoch --base "$SCAN_BASE" --branch "$GITHUB_REF_NAME" "$FILE"
+            python3 publish_git.py --base "$SCAN_BASE" --require-current-epoch --branch "$GITHUB_REF_NAME" "$FILE"
           fi
           python3 verify_remote_pair.py
           # Secondary create-only proof on a separate evidence branch.
